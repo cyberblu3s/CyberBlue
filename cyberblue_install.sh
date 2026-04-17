@@ -69,6 +69,41 @@ export UCF_FORCE_CONFFNEW=1
 export DEBIAN_PRIORITY=critical
 
 # ============================================================================
+# ARCHITECTURE DETECTION
+# ============================================================================
+# Detect host architecture so we can (a) skip amd64-only services on arm64 and
+# (b) let downstream scripts pick the right binary. Exposed as CYBERBLUE_ARCH
+# for any child process, and persisted to .env for docker-compose.
+CYBERBLUE_ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+case "$CYBERBLUE_ARCH" in
+    amd64|x86_64)
+        CYBERBLUE_ARCH="amd64"
+        # Enable all amd64-only services (currently: FleetDM stack).
+        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}amd64"
+        ;;
+    arm64|aarch64)
+        CYBERBLUE_ARCH="arm64"
+        # FleetDM, Sysmon-for-Linux, etc. stay disabled on arm64.
+        ;;
+    *)
+        echo "⚠️  Unknown architecture: $CYBERBLUE_ARCH - proceeding as amd64"
+        CYBERBLUE_ARCH="amd64"
+        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}amd64"
+        ;;
+esac
+export CYBERBLUE_ARCH
+echo "✓ Detected architecture: $CYBERBLUE_ARCH (COMPOSE_PROFILES=${COMPOSE_PROFILES:-<none>})"
+
+# Persist to .env so docker-compose and sub-scripts pick it up.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    sed -i '/^CYBERBLUE_ARCH=/d;/^COMPOSE_PROFILES=/d' "$SCRIPT_DIR/.env" 2>/dev/null || true
+fi
+{
+    echo "CYBERBLUE_ARCH=$CYBERBLUE_ARCH"
+    [ -n "${COMPOSE_PROFILES:-}" ] && echo "COMPOSE_PROFILES=$COMPOSE_PROFILES"
+} >> "$SCRIPT_DIR/.env"
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -727,25 +762,31 @@ echo ""
 echo ""
 
 echo -e "${BLUE}🔧 Step 2.12: Fleet Database Configuration${NC}"
-show_progress "Configuring Fleet database (2-3 minutes)..."
-echo ""
-timeout 600 sudo docker run --rm \
-  --network=cyber-blue \
-  -e FLEET_MYSQL_ADDRESS=fleet-mysql:3306 \
-  -e FLEET_MYSQL_USERNAME=fleet \
-  -e FLEET_MYSQL_PASSWORD=fleetpass \
-  -e FLEET_MYSQL_DATABASE=fleet \
-  fleetdm/fleet:latest fleet prepare db 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done || true
+if [ "$CYBERBLUE_ARCH" = "amd64" ]; then
+    show_progress "Configuring Fleet database (2-3 minutes)..."
+    echo ""
+    timeout 600 sudo docker run --rm \
+      --network=cyber-blue \
+      -e FLEET_MYSQL_ADDRESS=fleet-mysql:3306 \
+      -e FLEET_MYSQL_USERNAME=fleet \
+      -e FLEET_MYSQL_PASSWORD=fleetpass \
+      -e FLEET_MYSQL_DATABASE=fleet \
+      fleetdm/fleet:latest fleet prepare db 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done || true
 
-echo ""
-echo -e "${CYAN}   [FLEET]${NC} Starting Fleet server..."
-sudo docker compose up -d fleet-server 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done
-sleep 30
-echo -e "${GREEN}✅ Fleet configured${NC}"
+    echo ""
+    echo -e "${CYAN}   [FLEET]${NC} Starting Fleet server..."
+    sudo docker compose up -d fleet-server 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done
+    sleep 30
+    echo -e "${GREEN}✅ Fleet configured${NC}"
+else
+    echo -e "${YELLOW}   [FLEET]${NC} FleetDM has no arm64 image upstream - skipping on $CYBERBLUE_ARCH"
+    echo -e "${CYAN}   [FLEET]${NC} Use osquery agent directly, or run on amd64 host, for Fleet capabilities."
+    echo -e "${GREEN}✅ Fleet skipped (expected on $CYBERBLUE_ARCH)${NC}"
+fi
 
 echo ""
 echo -e "${BLUE}🔐 Step 2.12a: Fleet Enrollment Secret Configuration${NC}"
-if [ -f "fleet/configure-fleet-secret.sh" ]; then
+if [ "$CYBERBLUE_ARCH" = "amd64" ] && [ -f "fleet/configure-fleet-secret.sh" ]; then
     echo -e "${CYAN}   [FLEET]${NC} Generating and configuring enrollment secret..."
     if bash fleet/configure-fleet-secret.sh 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done; then
         echo -e "${GREEN}✅ Fleet enrollment secret configured${NC}"
@@ -756,6 +797,8 @@ if [ -f "fleet/configure-fleet-secret.sh" ]; then
     else
         echo -e "${YELLOW}⚠️  Fleet secret configuration had warnings (non-critical)${NC}"
     fi
+elif [ "$CYBERBLUE_ARCH" != "amd64" ]; then
+    echo -e "${YELLOW}   [FLEET]${NC} Skipping enrollment secret (Fleet not running on $CYBERBLUE_ARCH)"
 else
     echo -e "${YELLOW}⚠️  Fleet secret configuration script not found${NC}"
 fi

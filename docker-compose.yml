@@ -457,9 +457,15 @@ services:
     networks:
       - cyber-blue
 
+  # --- FleetDM stack (amd64-only) ---
+  # FleetDM does NOT publish an arm64 image or linux/arm64 binary as of 2026-04.
+  # All three fleet-* services are therefore gated behind the `amd64` compose
+  # profile: they only start when $COMPOSE_PROFILES contains `amd64` (set by
+  # cyberblue_install.sh after detecting `dpkg --print-architecture = amd64`).
   fleet-redis:
     image: redis:6.2
     container_name: fleet-redis
+    profiles: ["amd64"]
     restart: always
     ports:
       - "6390:6379"
@@ -469,6 +475,7 @@ services:
   fleet-mysql:
     image: mysql:8.0
     container_name: fleet-mysql
+    profiles: ["amd64"]
     restart: always
     command: --innodb-buffer-pool-size=1024M --innodb-flush-log-at-trx-commit=2 --skip-log-bin --innodb-log-file-size=256M --innodb-log-buffer-size=64M
     environment:
@@ -489,6 +496,7 @@ services:
   fleet-server:
     image: fleetdm/fleet:latest
     container_name: fleet-server
+    profiles: ["amd64"]
     depends_on:
       fleet-mysql:
         condition: service_healthy

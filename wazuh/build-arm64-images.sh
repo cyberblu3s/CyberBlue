@@ -54,8 +54,13 @@ if [ ! -d "$BUILD_DIR" ]; then
     exit 1
 fi
 
-# Wazuh's own build flow derives these from versions - replicate minimally.
-WAZUH_VERSION_NUM="$(echo "$WAZUH_IMAGE_VERSION" | sed -e 's/\.//g')"
+# NOTE: The Dockerfiles (wazuh-indexer/manager/dashboard) consume ARG
+# WAZUH_VERSION and then run `yum install wazuh-<kind>-${WAZUH_VERSION}-${WAZUH_TAG_REVISION}`.
+# The real RPM name in packages.wazuh.com is wazuh-indexer-4.12.0-1 (dotted),
+# NOT wazuh-indexer-4120-1. An earlier iteration of this script stripped the
+# dots via `sed 's/\.//g'` and produced a package spec that yum couldn't
+# resolve ("Unable to find a match: wazuh-indexer-4120-1"). Pass the dotted
+# version untouched - the filebeat module tarball naming keeps its own scheme.
 WAZUH_FILEBEAT_MODULE="wazuh-filebeat-${FILEBEAT_MODULE_VERSION}.tar.gz"
 
 # Pick the filebeat template branch that actually exists in wazuh/wazuh.
@@ -89,7 +94,7 @@ build_one() {
     local args=(
         --platform linux/arm64
         --load
-        --build-arg "WAZUH_VERSION=${WAZUH_VERSION_NUM}"
+        --build-arg "WAZUH_VERSION=${WAZUH_IMAGE_VERSION}"
         --build-arg "WAZUH_TAG_REVISION=${WAZUH_TAG_REVISION}"
         -t "${tag}"
     )

@@ -762,10 +762,18 @@ echo -e "${MAGENTA}   🎬 Watch the magic happen below:${NC}"
 echo -e "${MAGENTA}════════════════════════════════════════════════════════${NC}"
 echo ""
 
-if sudo docker compose up --build -d 2>&1 | while read line; do echo -e "${CYAN}   [DEPLOY]${NC} $line"; done; then
+# NOTE: route compose up through run_with_output (uses ${PIPESTATUS[0]}) so
+# a build failure in any service is caught as a real exit code instead of
+# being masked by the success of the trailing `while read` loop. Without
+# this, a single service (e.g. portal on arm64 if psutil can't compile)
+# causes compose to abort mid-build but the installer reports "✅ deployed"
+# and marches into Step 2.11 even though zero containers are running.
+if run_with_output "[DEPLOY]" sudo docker compose up --build -d; then
     echo -e "${GREEN}✅ All containers deployed${NC}"
 else
-    echo -e "${YELLOW}⚠️  Deployment completed with warnings${NC}"
+    echo -e "${RED}❌ Container deployment FAILED - check [DEPLOY] log above${NC}"
+    echo -e "${YELLOW}   Subsequent steps may fail or be partially applied. Inspect with:${NC}"
+    echo -e "${YELLOW}     sudo docker compose ps -a${NC}"
 fi
 
 echo ""

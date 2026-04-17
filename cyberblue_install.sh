@@ -646,6 +646,30 @@ if [[ ! -d "./caldera" ]]; then
         timeout 180 ./install_caldera.sh 2>&1 | while read line; do echo -e "${CYAN}   [CALDERA]${NC} $line"; done || echo "   Caldera setup completed"
     fi
 fi
+
+# --- arm64 patch: caldera's upstream Dockerfile hardcodes the amd64 Go tarball
+# ("go1.25.0.linux-amd64.tar.gz"). On arm64 hosts that makes `go version` fail
+# with exit 126 ("cannot execute binary file"), which aborts the compose up
+# build target for caldera and cascades to the rest of the stack. We patch
+# the hardcoded URL + filename to use ${TARGETARCH} so Docker BuildKit picks
+# linux-amd64 on amd64 hosts and linux-arm64 on arm64 hosts. The patch is
+# idempotent (grep -q first) and only runs if the Dockerfile still has the
+# upstream hardcoded line.
+if [[ -f "./caldera/Dockerfile" ]] && grep -q "go1.25.0.linux-amd64.tar.gz" ./caldera/Dockerfile; then
+    echo -e "${CYAN}   [CALDERA]${NC} Patching Dockerfile for multi-arch Go download..."
+    # Inject ARG TARGETARCH (docker buildx provides this automatically) and
+    # swap the literal amd64 URL+filename for the arch-aware form.
+    if ! grep -q "^ARG TARGETARCH" ./caldera/Dockerfile; then
+        # Insert after the first FROM debian:... AS runtime line so ARG is in scope
+        sed -i '/^FROM debian:.* AS runtime/a ARG TARGETARCH=amd64' ./caldera/Dockerfile
+    fi
+    sed -i 's|go1.25.0.linux-amd64.tar.gz|go1.25.0.linux-${TARGETARCH}.tar.gz|g' ./caldera/Dockerfile
+    if grep -q 'linux-\${TARGETARCH}' ./caldera/Dockerfile; then
+        echo -e "${GREEN}   [CALDERA]${NC} ✓ Dockerfile now supports linux/$CYBERBLUE_ARCH"
+    else
+        echo -e "${YELLOW}   [CALDERA]${NC} ⚠️  TARGETARCH patch did not apply cleanly - caldera may fail on arm64"
+    fi
+fi
 echo -e "${GREEN}✅ Caldera verified${NC}"
 
 echo ""

@@ -733,10 +733,17 @@ echo -e "${BLUE}🧱 Step 2.9a: Wazuh arm64 Image Build${NC}"
 if [ "$CYBERBLUE_ARCH" = "arm64" ]; then
     if [ -x "wazuh/build-arm64-images.sh" ]; then
         show_progress "Wazuh does not publish linux/arm64 images upstream - building locally (5-10 min)..."
-        if bash wazuh/build-arm64-images.sh 2>&1 | while read line; do echo -e "${CYAN}   [WAZUH-BUILD]${NC} $line"; done; then
+        # NOTE: call via sudo because `ubuntu` was only just added to the
+        # `docker` group by Step 1.2; new group membership isn't active in the
+        # current installer shell until re-login. sudo gives us root-equivalent
+        # docker access without requiring a logout/login. run_with_output
+        # preserves the real exit code via ${PIPESTATUS[0]} so a failed build
+        # won't masquerade as success (unlike a plain `| while read` pipe).
+        if run_with_output "[WAZUH-BUILD]" sudo bash wazuh/build-arm64-images.sh; then
             echo -e "${GREEN}✅ Wazuh arm64 images built${NC}"
         else
-            echo -e "${YELLOW}⚠️  Wazuh arm64 image build reported warnings - compose step will surface any hard failures${NC}"
+            echo -e "${RED}❌ Wazuh arm64 image build FAILED - wazuh-* services will not start${NC}"
+            echo -e "${YELLOW}   Inspect: sudo bash wazuh/build-arm64-images.sh (rerun manually)${NC}"
         fi
     else
         echo -e "${YELLOW}⚠️  wazuh/build-arm64-images.sh not found or not executable - skipping${NC}"

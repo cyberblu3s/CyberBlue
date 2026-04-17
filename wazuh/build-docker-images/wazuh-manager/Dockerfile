@@ -3,6 +3,10 @@ FROM amazonlinux:2023
 
 RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 
+# TARGETARCH is automatically provided by docker buildx / BuildKit when
+# building with --platform linux/amd64 or linux/arm64. S6_ARCH maps Docker's
+# convention (amd64/arm64) onto s6-overlay's convention (amd64/aarch64).
+ARG TARGETARCH=amd64
 ARG WAZUH_VERSION
 ARG WAZUH_TAG_REVISION
 ARG FILEBEAT_TEMPLATE_BRANCH
@@ -26,11 +30,18 @@ RUN yum install wazuh-manager-${WAZUH_VERSION}-${WAZUH_TAG_REVISION} -y && \
     chmod 775 /filebeat_module.sh && \
     source /filebeat_module.sh && \
     rm /filebeat_module.sh && \
-    curl --fail --silent -L https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-amd64.tar.gz \
-    -o /tmp/s6-overlay-amd64.tar.gz && \
-    tar xzf /tmp/s6-overlay-amd64.tar.gz -C / --exclude="./bin" && \
-    tar xzf /tmp/s6-overlay-amd64.tar.gz -C /usr ./bin && \
-    rm  /tmp/s6-overlay-amd64.tar.gz
+    # Map Docker TARGETARCH (amd64/arm64) to s6-overlay's asset name
+    # (amd64/aarch64). Fail loud on any other arch.
+    case "${TARGETARCH}" in \
+        amd64)   S6_ARCH="amd64" ;; \
+        arm64)   S6_ARCH="aarch64" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
+    esac && \
+    curl --fail --silent -L "https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}.tar.gz" \
+        -o "/tmp/s6-overlay-${S6_ARCH}.tar.gz" && \
+    tar xzf "/tmp/s6-overlay-${S6_ARCH}.tar.gz" -C / --exclude="./bin" && \
+    tar xzf "/tmp/s6-overlay-${S6_ARCH}.tar.gz" -C /usr ./bin && \
+    rm "/tmp/s6-overlay-${S6_ARCH}.tar.gz"
 
 COPY config/etc/ /etc/
 COPY --chown=root:wazuh config/create_user.py /var/ossec/framework/scripts/create_user.py

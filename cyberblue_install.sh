@@ -729,6 +729,24 @@ fi
 echo -e "${GREEN}✅ Agent deployment system ready${NC}"
 
 echo ""
+echo -e "${BLUE}🧱 Step 2.9a: Wazuh arm64 Image Build${NC}"
+if [ "$CYBERBLUE_ARCH" = "arm64" ]; then
+    if [ -x "wazuh/build-arm64-images.sh" ]; then
+        show_progress "Wazuh does not publish linux/arm64 images upstream - building locally (5-10 min)..."
+        if bash wazuh/build-arm64-images.sh 2>&1 | while read line; do echo -e "${CYAN}   [WAZUH-BUILD]${NC} $line"; done; then
+            echo -e "${GREEN}✅ Wazuh arm64 images built${NC}"
+        else
+            echo -e "${YELLOW}⚠️  Wazuh arm64 image build reported warnings - compose step will surface any hard failures${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  wazuh/build-arm64-images.sh not found or not executable - skipping${NC}"
+    fi
+else
+    echo -e "${CYAN}   [WAZUH]${NC} Host is $CYBERBLUE_ARCH - upstream Wazuh images work, no local build needed"
+    echo -e "${GREEN}✅ Wazuh arm64 build skipped (expected on $CYBERBLUE_ARCH)${NC}"
+fi
+
+echo ""
 echo -e "${BLUE}🚀 Step 2.10: Container Deployment${NC}"
 echo -e "${MAGENTA}════════════════════════════════════════════════════════${NC}"
 echo -e "${MAGENTA}   📦 Building and starting 30+ containers...${NC}"

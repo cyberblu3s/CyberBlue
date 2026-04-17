@@ -8,8 +8,11 @@ RUN apt-get -qq update && \
     apt-get install -yq curl libmagic-dev wget logrotate
 
 # Set arguments
+# TARGETARCH is automatically provided by docker buildx / BuildKit on multi-arch
+# builds (amd64, arm64, ...). Falls back to dpkg if someone builds without buildx.
+ARG TARGETARCH
 ARG ARKIME_VERSION=5.7.0
-ARG ARKIME_DEB_PACKAGE="arkime_${ARKIME_VERSION}-1.ubuntu2204_amd64.deb"
+ARG ARKIME_DEB_PACKAGE="arkime_${ARKIME_VERSION}-1.ubuntu2204_${TARGETARCH:-amd64}.deb"
 
 # Set environment variables
 ENV ARKIME_VERSION=$ARKIME_VERSION

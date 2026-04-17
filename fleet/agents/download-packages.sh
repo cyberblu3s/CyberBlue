@@ -27,20 +27,32 @@ curl -L -o osquery-windows.msi "${BASE_URL}/osquery-${OSQUERY_VERSION}.msi" \
     || { echo "Failed"; exit 1; }
 echo "      ✓ osquery-windows.msi"
 
-# Ubuntu/Debian
-echo "[2/4] Downloading Ubuntu/Debian DEB (29 MB)..."
+# Ubuntu/Debian amd64 (default filename kept for portal backwards-compat)
+echo "[2/6] Downloading Ubuntu/Debian DEB amd64 (29 MB)..."
 curl -L -o osquery-ubuntu.deb "${BASE_URL}/osquery_${OSQUERY_VERSION}-1.linux_amd64.deb" \
     || { echo "Failed"; exit 1; }
 echo "      ✓ osquery-ubuntu.deb"
 
-# RHEL/CentOS
-echo "[3/4] Downloading RHEL/CentOS RPM (29 MB)..."
+# Ubuntu/Debian arm64
+echo "[3/6] Downloading Ubuntu/Debian DEB arm64 (~28 MB)..."
+curl -L -o osquery-ubuntu-arm64.deb "${BASE_URL}/osquery_${OSQUERY_VERSION}-1.linux_arm64.deb" \
+    || { echo "[WARN] Failed to download Ubuntu/Debian arm64 DEB - arm64 endpoints will not be deployable"; }
+echo "      ✓ osquery-ubuntu-arm64.deb"
+
+# RHEL/CentOS x86_64
+echo "[4/6] Downloading RHEL/CentOS RPM x86_64 (29 MB)..."
 curl -L -o osquery-centos.rpm "${BASE_URL}/osquery-${OSQUERY_VERSION}-1.linux.x86_64.rpm" \
     || { echo "Failed"; exit 1; }
 echo "      ✓ osquery-centos.rpm"
 
-# macOS
-echo "[4/4] Downloading macOS PKG (23 MB)..."
+# RHEL/CentOS aarch64
+echo "[5/6] Downloading RHEL/CentOS RPM aarch64 (~28 MB)..."
+curl -L -o osquery-centos-arm64.rpm "${BASE_URL}/osquery-${OSQUERY_VERSION}-1.linux.aarch64.rpm" \
+    || { echo "[WARN] Failed to download RHEL/CentOS aarch64 RPM - arm64 endpoints will not be deployable"; }
+echo "      ✓ osquery-centos-arm64.rpm"
+
+# macOS (universal binary PKG - works for both Intel and Apple Silicon)
+echo "[6/6] Downloading macOS PKG (23 MB)..."
 curl -L -o osquery-macos.pkg "${BASE_URL}/osquery-${OSQUERY_VERSION}.pkg" \
     || { echo "Failed"; exit 1; }
 echo "      ✓ osquery-macos.pkg"

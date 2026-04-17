@@ -31,17 +31,29 @@ curl -L -o wazuh-agent-windows.msi "${BASE_URL}/windows/wazuh-agent-${WAZUH_VERS
     || { echo "Failed to download Windows MSI"; exit 1; }
 echo "      ✓ wazuh-agent-windows.msi downloaded"
 
-# Linux - Ubuntu/Debian
-echo "[2/3] Downloading Ubuntu/Debian DEB (11.4 MB)..."
+# Linux - Ubuntu/Debian amd64 (default filename kept for portal backwards-compat)
+echo "[2/5] Downloading Ubuntu/Debian DEB amd64 (11.4 MB)..."
 curl -L -o wazuh-agent-ubuntu.deb "${BASE_URL}/apt/pool/main/w/wazuh-agent/wazuh-agent_${WAZUH_VERSION}_amd64.deb" \
-    || { echo "Failed to download Ubuntu/Debian DEB"; exit 1; }
+    || { echo "Failed to download Ubuntu/Debian amd64 DEB"; exit 1; }
 echo "      ✓ wazuh-agent-ubuntu.deb downloaded"
 
-# Linux - RHEL/CentOS
-echo "[3/3] Downloading RHEL/CentOS RPM (9.6 MB)..."
+# Linux - Ubuntu/Debian arm64 (Apple Silicon, Pi, Graviton)
+echo "[3/5] Downloading Ubuntu/Debian DEB arm64 (~11 MB)..."
+curl -L -o wazuh-agent-ubuntu-arm64.deb "${BASE_URL}/apt/pool/main/w/wazuh-agent/wazuh-agent_${WAZUH_VERSION}_arm64.deb" \
+    || { echo "[WARN] Failed to download Ubuntu/Debian arm64 DEB - arm64 endpoints will not be deployable"; }
+echo "      ✓ wazuh-agent-ubuntu-arm64.deb downloaded"
+
+# Linux - RHEL/CentOS x86_64
+echo "[4/5] Downloading RHEL/CentOS RPM x86_64 (9.6 MB)..."
 curl -L -o wazuh-agent-centos.rpm "${BASE_URL}/yum/wazuh-agent-${WAZUH_VERSION}.x86_64.rpm" \
-    || { echo "Failed to download RHEL/CentOS RPM"; exit 1; }
+    || { echo "Failed to download RHEL/CentOS x86_64 RPM"; exit 1; }
 echo "      ✓ wazuh-agent-centos.rpm downloaded"
+
+# Linux - RHEL/CentOS aarch64
+echo "[5/5] Downloading RHEL/CentOS RPM aarch64 (~10 MB)..."
+curl -L -o wazuh-agent-centos-arm64.rpm "${BASE_URL}/yum/wazuh-agent-${WAZUH_VERSION}.aarch64.rpm" \
+    || { echo "[WARN] Failed to download RHEL/CentOS aarch64 RPM - arm64 endpoints will not be deployable"; }
+echo "      ✓ wazuh-agent-centos-arm64.rpm downloaded"
 
 echo ""
 echo "========================================"

@@ -1,0 +1,45 @@
+# CyberBlueSOC - Falco configuration
+#
+# Reference: https://falco.org/docs/configuration/
+
+rules_files:
+  - /etc/falco/falco_rules.yaml
+  - /etc/falco/falco_rules.local.yaml
+  - /etc/falco/rules.d
+
+# Driver: kmod compiles a kernel module on first run. Most compatible across
+# AWS, GCP, Azure, bare metal, KVM. Modern eBPF (kind: modern_ebpf) is faster
+# but flaky on some nested cloud kernels.
+engine:
+  kind: kmod
+  kmod:
+    buf_size_preset: 4
+    drop_failed_exit: false
+
+watch_config_files: true
+
+time_format_iso_8601: true
+priority: notice
+
+json_output: true
+json_include_output_property: true
+json_include_tags_property: true
+
+log_stderr: true
+log_syslog: false
+log_level: info
+
+stdout_output:
+  enabled: true
+
+http_output:
+  enabled: true
+  url: "http://falcosidekick:2801/"
+  user_agent: "falcosecurity/falco"
+
+webserver:
+  enabled: true
+  threadiness: 0
+  listen_port: 8765
+  k8s_healthz_endpoint: /healthz
+  ssl_enabled: false

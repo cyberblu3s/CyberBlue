@@ -1,0 +1,26 @@
+services:
+  zeek:
+    image: zeek/zeek:lts
+    container_name: zeek
+    profiles: [standard]
+    restart: unless-stopped
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+    environment:
+      ZEEK_INTERFACE: ${ZEEK_INTERFACE:-eth0}
+    volumes:
+      - ./config/local.zeek:/usr/local/zeek/share/zeek/site/local.zeek:ro
+      - ./logs:/usr/local/zeek/logs
+    command: >
+      bash -c "
+      mkdir -p /usr/local/zeek/logs/current &&
+      cd /usr/local/zeek/logs/current &&
+      exec zeek -i ${ZEEK_INTERFACE:-eth0} local
+      "
+    healthcheck:
+      test: ["CMD", "pgrep", "-f", "zeek"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

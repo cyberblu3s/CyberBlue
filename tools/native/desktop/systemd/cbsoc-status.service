@@ -1,0 +1,8 @@
+[Unit]
+Description=Refresh CyberBlueSOC welcome dashboard status.json
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/cbsoc-status-refresh
+Nice=10

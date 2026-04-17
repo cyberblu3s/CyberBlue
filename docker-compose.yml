@@ -58,23 +58,10 @@ services:
     networks:
       - cyber-blue
 
-  wireshark:
-    image: lscr.io/linuxserver/wireshark:latest
-    container_name: wireshark
-    cap_add:
-      - NET_ADMIN
-    network_mode: host
-    environment:
-      - CUSTOM_USER=admin
-      - PASSWORD=cyberblue
-      - CUSTOM_PORT=7098 # Change HTTP port
-      - CUSTOM_HTTPS_PORT=7099 # Optional: HTTPS port if needed
-    volumes:
-      - ./wireshark/config:/config
-    ports:
-      - "7099:3001" # HTTPS 
-    restart: unless-stopped
-    privileged: true
+  # Wireshark is now installed NATIVELY (see tools/native/install.sh).
+  # A GUI packet analyzer does not belong in a privileged host-mode container:
+  # users expect `wireshark foo.pcap` from the file manager, and tshark/editcap/
+  # mergecap come along for free. See ENHANCEMENTS.md for the migration notes.
 
   suricata:
     image: stamus/suricata:latest

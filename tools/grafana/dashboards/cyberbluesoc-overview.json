@@ -1,0 +1,88 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "builtIn": 1,
+        "datasource": {"type": "grafana", "uid": "-- Grafana --"},
+        "enable": true,
+        "hide": true,
+        "iconColor": "rgba(0, 211, 255, 1)",
+        "name": "Annotations & Alerts",
+        "type": "dashboard"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "type": "text",
+      "title": "CyberBlueSOC — Unified Overview",
+      "gridPos": {"h": 4, "w": 24, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "mode": "markdown",
+        "content": "# CyberBlueSOC — Unified Overview\n\nThis dashboard ties the core SOC tools into one pane of glass.\n\nDatasources are pre-provisioned: **Wazuh Indexer**, **Shuffle OpenSearch**, **TheHive Elasticsearch**.\n\nTo start filling panels, edit a panel and bind it to a datasource + index pattern. Suggested patterns:\n\n- Wazuh alerts: `wazuh-alerts-*`\n- Zeek conn logs: `zeek-conn-*`\n- TheHive cases: `thehive_*`"
+      }
+    },
+    {
+      "type": "stat",
+      "title": "Wazuh — Alerts (last 24h)",
+      "datasource": {"type": "grafana-opensearch-datasource", "uid": "wazuh-indexer"},
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 4},
+      "id": 2,
+      "options": {
+        "reduceOptions": {"calcs": ["sum"], "fields": "", "values": false},
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto"
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [{"type": "count", "id": "1"}],
+          "bucketAggs": [
+            {"type": "date_histogram", "id": "2", "settings": {"interval": "1h", "min_doc_count": "0"}, "field": "@timestamp"}
+          ]
+        }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "title": "Wazuh — Alerts over time",
+      "datasource": {"type": "grafana-opensearch-datasource", "uid": "wazuh-indexer"},
+      "gridPos": {"h": 8, "w": 18, "x": 6, "y": 4},
+      "id": 3,
+      "fieldConfig": {
+        "defaults": {"color": {"mode": "palette-classic"}, "custom": {"drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60}}
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "query": "*",
+          "metrics": [{"type": "count", "id": "1"}],
+          "bucketAggs": [
+            {"type": "date_histogram", "id": "2", "settings": {"interval": "auto", "min_doc_count": "0"}, "field": "@timestamp"}
+          ]
+        }
+      ]
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 39,
+  "style": "dark",
+  "tags": ["cyberbluesoc", "overview"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "",
+  "title": "CyberBlueSOC — Overview",
+  "uid": "cyberbluesoc-overview",
+  "version": 1,
+  "weekStart": ""
+}

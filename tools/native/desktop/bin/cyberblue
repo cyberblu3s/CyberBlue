@@ -1,0 +1,350 @@
+#!/usr/bin/env bash
+#
+# cyberblue — single entry-point for the CyberBlueSOC platform.
+#
+# Installed at /usr/local/bin/cyberblue by tools/native/desktop/install-desktop.sh.
+# Everything here is intentionally plain bash so it works on a minimal ISO
+# before the welcome dashboard / XFCE menu has been opened.
+
+set -u
+
+CBSOC_ROOT="${CBSOC_ROOT:-/home/ubuntu/CyberBlue}"
+WELCOME_HTML="/usr/local/share/cyberbluesoc/welcome/index.html"
+VERSION="1.0.0"
+
+# ANSI helpers (no-op when stdout is not a tty).
+if [[ -t 1 ]]; then
+  B="\033[1m"; D="\033[2m"; R="\033[0m"
+  BLUE="\033[38;5;75m"; GREEN="\033[38;5;42m"; YELLOW="\033[38;5;214m"; RED="\033[38;5;203m"
+  CYAN="\033[38;5;87m"; WHITE="\033[38;5;231m"
+else
+  B=""; D=""; R=""; BLUE=""; GREEN=""; YELLOW=""; RED=""; CYAN=""; WHITE=""
+fi
+
+banner() {
+  printf "${BLUE}%s${R}\n" "┌─────────────────────────────────────────────────────────┐"
+  printf "${BLUE}│${R}  ${B}CyberBlue${BLUE}SOC${R}  ${D}— a Kali for Blue Teams — v${VERSION}${R}          ${BLUE}│${R}\n"
+  printf "${BLUE}%s${R}\n" "└─────────────────────────────────────────────────────────┘"
+}
+
+in_compose() {
+  if [[ ! -f "$CBSOC_ROOT/docker-compose.yml" ]]; then
+    echo -e "${RED}error:${R} $CBSOC_ROOT/docker-compose.yml not found." >&2
+    echo "       set CBSOC_ROOT=/path/to/CyberBlue if installed elsewhere." >&2
+    exit 2
+  fi
+  cd "$CBSOC_ROOT"
+}
+
+host_ip() {
+  hostname -I 2>/dev/null | awk '{print $1}'
+}
+
+# ----------------------------------------------------------------- commands
+
+cmd_help() {
+  banner
+  cat <<EOF
+
+${B}USAGE${R}
+  cyberblue <command> [args]
+
+${B}STACK CONTROL${R}
+  ${GREEN}status${R}              Show all services (core + extras) with health
+  ${GREEN}up${R}    [profile]     Start the stack — profile: standard (default), full, falco
+  ${GREEN}down${R}                Stop the stack (data volumes preserved)
+  ${GREEN}restart${R} [svc...]    Restart one or more services
+  ${GREEN}logs${R}    <svc>       Tail logs for a service
+  ${GREEN}ps${R}                  Raw docker compose ps (core + extras)
+  ${GREEN}update${R}              git pull + docker compose pull + up -d
+
+${B}DISCOVERY${R}
+  ${GREEN}urls${R}                Print every web UI with its URL and credentials
+  ${GREEN}creds${R}               Default credentials in a focused table (lab-only)
+  ${GREEN}tools${R}   [category]  List native CLI / desktop tools (all | network | disk | …)
+  ${GREEN}rules${R}               Show installed detection rule packs (Sigma + YARA)
+  ${GREEN}dashboard${R}           Open the welcome dashboard in the default browser
+  ${GREEN}portal${R}              Open the legacy tile portal
+  ${GREEN}open${R}    <tool>      Open a specific web UI by name (e.g. ${D}cyberblue open wazuh${R})
+
+${B}INFO${R}
+  ${GREEN}version${R}             Show CyberBlueSOC version and key paths
+  ${GREEN}doctor${R}              Quick self-check (ports, docker, RAM, kernel)
+
+EOF
+}
+
+cmd_version() {
+  banner
+  echo "  version     : $VERSION"
+  echo "  compose root: $CBSOC_ROOT"
+  echo "  welcome HTML: $WELCOME_HTML"
+  echo "  host ip     : $(host_ip)"
+  echo
+  if command -v docker >/dev/null; then
+    echo "  docker      : $(docker --version)"
+    echo "  compose     : $(docker compose version --short 2>/dev/null || echo n/a)"
+  fi
+}
+
+cmd_urls() {
+  local IP; IP="$(host_ip)"
+  banner
+  echo
+  printf "${B}  %-18s %-38s %s${R}\n" "SERVICE" "URL" "CREDENTIALS"
+  printf "${D}  %-18s %-38s %s${R}\n"  "-------" "---" "-----------"
+  _row() { printf "  %-18s %-38s %s\n" "$1" "$2" "$3"; }
+  _row "Wazuh"            "https://$IP:7001"           "admin / SecretPassword"
+  _row "Velociraptor"     "https://$IP:7000"           "admin / cyberblue"
+  _row "MISP"             "https://$IP:7003"           "admin@admin.test / admin"
+  _row "MITRE Navigator"  "http://$IP:7013"            "—"
+  _row "TheHive"          "http://$IP:7005"            "admin@thehive.local / secret"
+  _row "Cortex"           "http://$IP:7006"            "admin / admin"
+  _row "Shuffle"          "http://$IP:3001"            "—"
+  _row "Arkime"           "http://$IP:7008"            "admin / admin"
+  _row "Evebox"           "http://$IP:7015"            "—"
+  _row "Caldera"          "http://$IP:7009"            "admin / admin"
+  _row "FleetDM"          "http://$IP:7007"            "admin / admin123"
+  _row "CyberChef"        "http://$IP:7004"            "—"
+  _row "CyberBlue Portal" "https://$IP:5443"           "—"
+  _row "Portainer"        "https://$IP:9443"           "set on first visit"
+  _row "Grafana"          "http://$IP:3000"            "admin / cyberblue"
+  _row "CrowdSec LAPI"    "http://$IP:6060/metrics"    "—"
+  echo
+  echo -e "${D}  Tip: 'cyberblue open <name>' launches any of these in your browser.${R}"
+}
+
+cmd_creds() {
+  local IP; IP="$(host_ip)"
+  banner
+  echo
+  echo -e "${YELLOW}  ⚠  These are LAB defaults. Change them before using with real data."
+  echo -e "     Full rotation guide: ${WHITE}$CBSOC_ROOT/CREDENTIALS.md${R}"
+  echo
+  printf "${B}  %-18s %-38s %-22s %s${R}\n" "SERVICE" "URL" "USERNAME" "PASSWORD"
+  printf "${D}  %-18s %-38s %-22s %s${R}\n"  "-------" "---" "--------" "--------"
+  _crow() { printf "  %-18s %-38s ${CYAN}%-22s${R} ${GREEN}%s${R}\n" "$1" "$2" "$3" "$4"; }
+  _nrow() { printf "  %-18s %-38s ${D}%s${R}\n"                           "$1" "$2" "$3"; }
+  _crow "Wazuh"            "https://$IP:7001"           "admin"               "SecretPassword"
+  _crow "Velociraptor"     "https://$IP:7000"           "admin"               "cyberblue"
+  _crow "MISP"             "https://$IP:7003"           "admin@admin.test"    "admin"
+  _crow "TheHive"          "http://$IP:7005"            "admin@thehive.local" "secret"
+  _crow "Cortex"           "http://$IP:7006"            "admin"               "admin"
+  _crow "Arkime"           "http://$IP:7008"            "admin"               "admin"
+  _crow "Caldera"          "http://$IP:7009"            "admin"               "admin"
+  _crow "FleetDM"          "http://$IP:7007"            "admin"               "admin123"
+  _crow "Grafana"          "http://$IP:3000"            "admin"               "cyberblue"
+  echo
+  echo -e "${B}  First-visit setup (set admin on first open):${R}"
+  _nrow "Portainer"        "https://$IP:9443"           "create admin on first visit — 5 min timeout, restart container if missed"
+  _nrow "Shuffle"          "http://$IP:3001"            "first user created becomes org admin"
+  echo
+  echo -e "${B}  No authentication (lab-only — do not expose):${R}"
+  _nrow "MITRE Navigator"  "http://$IP:7013"            "—"
+  _nrow "CyberChef"        "http://$IP:7004"            "—"
+  _nrow "Evebox"           "http://$IP:7015"            "—"
+  _nrow "CyberBlue Portal" "https://$IP:5443"           "—"
+  _nrow "CrowdSec LAPI"    "http://$IP:6060/metrics"    "metrics only"
+  echo
+  echo -e "${D}  Firefox on this box auto-fills these login forms on page load.${R}"
+  echo -e "${D}  To rotate: see $CBSOC_ROOT/CREDENTIALS.md (one-liner per tool).${R}"
+}
+
+cmd_tools() {
+  local filter="${1:-all}"
+  banner
+  echo
+  _print_group() {
+    local title="$1" ico="$2"; shift 2
+    printf "\n${B}  %s %s${R}\n" "$ico" "$title"
+    printf "    %s\n" "$@"
+  }
+  _show() {
+    # args: cat_id title ico tools...
+    local id="$1" title="$2" ico="$3"; shift 3
+    if [[ "$filter" == "all" || "$filter" == "$id" ]]; then
+      _print_group "$title" "$ico" "$@"
+      MATCHED=1
+    fi
+  }
+  MATCHED=0
+
+  _show network  "Network Forensics"        "📡" \
+    "wireshark    zui (brim)   tshark       termshark    tcpdump      ngrep        tcpreplay    mitmproxy    networkminer nmap         masscan"
+  _show disk     "Disk Forensics"           "💽" \
+    "autopsy      fls          mmls         icat         ewfinfo      testdisk     foremost     scalpel      bulk_extractor  binwalk      dc3dd"
+  _show memory   "Memory Forensics"         "🧠" \
+    "vol          volshell"
+  _show timeline "Timeline / Super-Timeline" "⏱️" \
+    "log2timeline psort"
+  _show windows  "Windows Artifact Triage"  "🪟" \
+    "chainsaw     hayabusa     zircolite    regripper    evtx_dump"
+  _show detect   "Detection Engineering"    "🧪" \
+    "sigma        yara         nuclei       trivy        cyberblue-rules (Sigma+YARA packs)"
+  _show malware  "Malware / File Triage"    "☣️" \
+    "r2 (radare2) upx          olevba       pdfid        pdf-parser   capa         floss        clamscan"
+  _show ioc      "IOC / Data Utilities"     "🧰" \
+    "iocextract   hashid       hashdeep     ssdeep       exiftool     hexedit      jq           rg           dnstwist     hindsight"
+  _show advsim   "Adversary Simulation"     "♟️" \
+    "atomic-list (Atomic Red Team)   stratus (Stratus Red Team)   nxc (NetExec)"
+  _show beacon   "Beaconing / Traffic"      "📶" \
+    "maltrail-sensor   maltrail-server (UI :8338)"
+  _show cloud    "Cloud Security"           "☁️" \
+    "prowler"
+  _show endpoint "Endpoint Telemetry"       "🖥️" \
+    "sysmon (for Linux — systemctl enable --now sysmon)"
+
+  if [[ "$MATCHED" -eq 0 ]]; then
+    echo -e "${YELLOW}Unknown category '$filter'.${R} Try: all network disk memory timeline windows detect malware ioc advsim beacon cloud endpoint" >&2
+    exit 2
+  fi
+  echo
+  echo -e "${D}  Run any tool with --help, or launch GUIs (wireshark, autopsy, networkminer) directly.${R}"
+}
+
+cmd_rules() {
+  if command -v cyberblue-rules >/dev/null 2>&1; then
+    cyberblue-rules
+  else
+    echo -e "${RED}cyberblue-rules not installed.${R}  Re-run:  ${D}sudo bash $CBSOC_ROOT/tools/native/install.sh${R}" >&2
+    exit 1
+  fi
+}
+
+cmd_status() {
+  in_compose
+  banner
+  echo
+  if ! command -v docker >/dev/null; then
+    echo -e "${RED}docker is not installed.${R}"
+    exit 1
+  fi
+
+  printf "${B}  %-26s %-10s %s${R}\n" "CONTAINER" "STATE" "STATUS"
+  printf "${D}  %-26s %-10s %s${R}\n"  "---------" "-----" "------"
+  docker ps -a --format '{{.Names}}|{{.State}}|{{.Status}}' \
+    | sort \
+    | while IFS='|' read -r name state status; do
+        local col="$R"
+        case "$state" in
+          running) col="$GREEN";;
+          exited|dead|stopped) col="$RED";;
+          *) col="$YELLOW";;
+        esac
+        printf "  ${col}%-26s %-10s${R} %s\n" "$name" "$state" "$status"
+      done
+
+  echo
+  echo -e "${D}  free -h  ·  host: $(host_ip)${R}"
+  free -h | sed 's/^/    /'
+}
+
+cmd_up() {
+  in_compose
+  local profile="${1:-standard}"
+  case "$profile" in
+    standard) docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard up -d ;;
+    full)     docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard --profile full up -d ;;
+    falco)    docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard --profile falco up -d ;;
+    *) echo -e "${RED}unknown profile '$profile'.${R} use: standard | full | falco" >&2; exit 2 ;;
+  esac
+}
+cmd_down()    { in_compose; docker compose -f docker-compose.yml -f docker-compose.extras.yml down; }
+cmd_restart() { in_compose; docker compose restart "$@"; }
+cmd_logs()    { in_compose; docker compose logs -f --tail=200 "${1:?service name required}"; }
+cmd_ps()      { in_compose; docker compose -f docker-compose.yml -f docker-compose.extras.yml ps; }
+
+cmd_update() {
+  in_compose
+  git pull --ff-only || true
+  docker compose -f docker-compose.yml -f docker-compose.extras.yml pull
+  cmd_up standard
+}
+
+cmd_dashboard() {
+  if [[ -f "$WELCOME_HTML" ]]; then
+    xdg-open "file://$WELCOME_HTML" 2>/dev/null || true
+  else
+    echo -e "${RED}welcome dashboard not found at $WELCOME_HTML${R}" >&2
+    exit 1
+  fi
+}
+cmd_portal() {
+  local IP; IP="$(host_ip)"
+  xdg-open "https://$IP:5443" 2>/dev/null || echo "portal: https://$IP:5443"
+}
+
+cmd_open() {
+  local name="${1:-}"; [[ -z "$name" ]] && { echo "usage: cyberblue open <tool-name>"; exit 2; }
+  local IP; IP="$(host_ip)"
+  local url=""
+  case "${name,,}" in
+    wazuh)         url="https://$IP:7001" ;;
+    velociraptor|velo) url="https://$IP:7000" ;;
+    misp)          url="https://$IP:7003" ;;
+    mitre|navigator) url="http://$IP:7013" ;;
+    thehive|hive)  url="http://$IP:7005" ;;
+    cortex)        url="http://$IP:7006" ;;
+    shuffle)       url="http://$IP:3001" ;;
+    arkime)        url="http://$IP:7008" ;;
+    evebox)        url="http://$IP:7015" ;;
+    caldera)       url="http://$IP:7009" ;;
+    fleetdm|fleet) url="http://$IP:7007" ;;
+    cyberchef|chef) url="http://$IP:7004" ;;
+    portal|cyberblue) url="https://$IP:5443" ;;
+    portainer)     url="https://$IP:9443" ;;
+    grafana)       url="http://$IP:3000" ;;
+    crowdsec)      url="http://$IP:6060/metrics" ;;
+    *) echo -e "${RED}unknown tool '$name'.${R} run 'cyberblue urls' to list." >&2; exit 2 ;;
+  esac
+  xdg-open "$url" 2>/dev/null || echo "$url"
+}
+
+cmd_doctor() {
+  banner
+  echo
+  _ok()   { echo -e "  ${GREEN}✔${R} $1"; }
+  _warn() { echo -e "  ${YELLOW}!${R} $1"; }
+  _err()  { echo -e "  ${RED}✘${R} $1"; }
+
+  command -v docker >/dev/null   && _ok "docker present"       || _err "docker not found"
+  docker compose version >/dev/null 2>&1 && _ok "docker compose v2" || _err "docker compose v2 missing"
+  [[ -f "$CBSOC_ROOT/docker-compose.yml" ]] && _ok "found compose root at $CBSOC_ROOT" || _err "no compose root at $CBSOC_ROOT"
+  [[ -f "$WELCOME_HTML" ]]       && _ok "welcome dashboard installed" || _warn "welcome dashboard missing"
+
+  # RAM
+  local mem_gb; mem_gb="$(awk '/^MemTotal:/ {printf "%.1f", $2/1024/1024}' /proc/meminfo)"
+  awk -v m="$mem_gb" 'BEGIN { exit !(m >= 14) }' \
+    && _ok "RAM: ${mem_gb} GiB (≥14 GiB target met)" \
+    || _warn "RAM: ${mem_gb} GiB (CyberBlueSOC Standard expects ≥14 GiB)"
+
+  # open ports
+  for p in 5443 7001 7000 7003 7005 7006 7007 7008 7009 7013 7015 3000 3001 9443 5500 7004; do
+    if ss -lnt "sport = :$p" 2>/dev/null | grep -q LISTEN; then _ok "port $p listening"; else _warn "port $p not listening"; fi
+  done
+}
+
+# -------------------------------------------------------------------- main
+case "${1:-help}" in
+  help|-h|--help)   shift; cmd_help           ;;
+  version|-v|--version) cmd_version          ;;
+  status)           shift; cmd_status "$@"    ;;
+  up)               shift; cmd_up "$@"        ;;
+  down)             shift; cmd_down "$@"      ;;
+  restart)          shift; cmd_restart "$@"   ;;
+  logs)             shift; cmd_logs "$@"      ;;
+  ps)               shift; cmd_ps "$@"        ;;
+  update)           shift; cmd_update "$@"    ;;
+  urls)             shift; cmd_urls "$@"      ;;
+  creds|credentials) shift; cmd_creds "$@"    ;;
+  tools)            shift; cmd_tools "$@"     ;;
+  rules)            shift; cmd_rules "$@"     ;;
+  dashboard|welcome) cmd_dashboard            ;;
+  portal)           cmd_portal                ;;
+  open)             shift; cmd_open "$@"      ;;
+  doctor)           cmd_doctor                ;;
+  *)
+    echo -e "${RED}unknown command '$1'.${R} run 'cyberblue help'." >&2
+    exit 2
+    ;;
+esac

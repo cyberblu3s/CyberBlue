@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CyberBlueSOC — Welcome</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="top">
+    <div class="brand">
+      <img src="logo.svg" alt="CyberBlueSOC" class="brand-logo" />
+      <div class="brand-text">
+        <div class="brand-name">CyberBlue<span>SOC</span></div>
+        <div class="brand-tag">A Kali for Blue Teams &middot; SOC in a box</div>
+      </div>
+    </div>
+    <div class="meta">
+      <div class="meta-row"><span class="k">Host</span><span class="v" id="host">—</span></div>
+      <div class="meta-row"><span class="k">Updated</span><span class="v" id="updated">—</span></div>
+      <div class="pill" id="health-pill">loading…</div>
+      <button type="button" class="creds-sheet-btn" id="open-creds-sheet"
+              title="Show all default credentials">🔐 Credentials</button>
+    </div>
+  </header>
+
+  <!-- All-credentials modal, populated from catalog.js on open. -->
+  <div class="creds-modal" id="creds-modal" hidden>
+    <div class="creds-modal-card">
+      <div class="creds-modal-head">
+        <div>
+          <h2>Default credentials</h2>
+          <p class="creds-banner">
+            ⚠️ These are <b>lab defaults</b>. Change them before using CyberBlueSOC
+            with real data. See <code>CREDENTIALS.md</code> for rotation steps.
+          </p>
+        </div>
+        <button type="button" class="creds-close" id="close-creds-sheet"
+                aria-label="Close">✕</button>
+      </div>
+      <div class="creds-table" id="creds-table"><!-- filled by app.js --></div>
+    </div>
+  </div>
+
+  <div class="searchbar">
+    <span class="search-ico">🔎</span>
+    <input type="search" id="search-input"
+           placeholder="Search any tool by name, description, or binary (e.g. zui, nmap, sigma, yara, wazuh)…"
+           autocomplete="off" spellcheck="false" />
+    <span class="search-hint" id="search-hint"></span>
+  </div>
+
+  <nav class="filters" id="filters"><!-- rendered by app.js --></nav>
+
+  <section class="section">
+    <h2 class="section-title">
+      <span class="ico">🛡️</span>
+      <span>SOC Web Tools</span>
+      <span class="count" id="count-web">—</span>
+    </h2>
+    <div class="grid" id="grid-web"><!-- rendered by app.js --></div>
+  </section>
+
+  <section class="section">
+    <h2 class="section-title">
+      <span class="ico">⚙️</span>
+      <span>Native Toolkit</span>
+      <span class="count" id="count-native">—</span>
+      <span class="subtitle">host-installed CLI &amp; desktop tools &middot; click any CLI chip to launch a terminal with its help</span>
+    </h2>
+    <div id="native-groups"><!-- rendered by app.js --></div>
+  </section>
+
+  <footer class="foot">
+    <span>CyberBlueSOC Standard &middot; core + extras + native toolkit</span>
+    <span class="right">
+      <a href="https://github.com/cyberblu3s/CyberBlue" target="_blank">GitHub</a>
+      &middot;
+      <a href="#" onclick="window.location.reload();return false;">Refresh</a>
+    </span>
+  </footer>
+
+  <!-- status.js is regenerated every 30s by cbsoc-status-refresh.
+       It defines window.STATUS = {host, containers: {name: {...}}, ts}. -->
+  <script src="status.js"></script>
+  <script src="catalog.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

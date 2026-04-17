@@ -3008,7 +3008,6 @@
         // Enhanced tool categorization and performance tracking
         const toolCategories = {
             'velociraptor': 'dfir',
-            'wireshark': 'network analysis',
             'wazuh': 'siem',
             'wazuh dashboard': 'siem',
             'misp': 'threat intel',
@@ -3190,7 +3189,6 @@
                 'arkime': 'arkime',
                 'caldera': 'caldera',
                 'evebox': 'evebox',
-                'wireshark': 'wireshark',
                 'mitre navigator': 'mitre-navigator',
                 'portainer': 'portainer',
                 'openvas': 'openvas'
@@ -4996,9 +4994,10 @@
             { name: 'Arkime', url: 'http://{{IP}}:7008', user: 'admin', pass: 'admin', category: 'Network', icon: 'fas fa-network-wired', color: '#14b8a6' },
             { name: 'Caldera', url: 'http://{{IP}}:7009', api: 'http://{{IP}}:7009/api/v2', user: 'admin', pass: 'admin', category: 'Red Team', icon: 'fas fa-chess-king', color: '#dc2626' },
             { name: 'MITRE Navigator', url: 'http://{{IP}}:7013', category: 'CTI', icon: 'fas fa-sitemap', color: '#6366f1' },
-            { name: 'Evebox', url: 'http://{{IP}}:7015', category: 'IDS', icon: 'fas fa-eye', color: '#ec4899' },
-            { name: 'Wireshark', url: 'https://{{IP}}:7099', user: 'admin', pass: 'cyberblue', category: 'Network', icon: 'fas fa-filter', color: '#0ea5e9' }
+            { name: 'Evebox', url: 'http://{{IP}}:7015', category: 'IDS', icon: 'fas fa-eye', color: '#ec4899' }
         ];
+        // Wireshark is now installed natively (see tools/native/install.sh).
+        // Launch from the desktop or `wireshark` / `tshark` on the CLI.
 
         function showShuffleIntegrations() {
             // Hide agent grid, show Shuffle integrations

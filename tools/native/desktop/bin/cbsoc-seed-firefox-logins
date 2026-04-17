@@ -1,0 +1,439 @@
+#!/usr/bin/env python3
+"""
+cbsoc-seed-firefox-logins
+=========================
+
+Seed a Firefox profile with CyberBlueSOC defaults so every web UI:
+  - auto-fills its username + password on page load (no extension, no
+    userscript — Firefox saves the logins through its own
+    ``Services.logins`` code path), and
+  - opens without the "Warning: Potential Security Risk Ahead"
+    self-signed-cert interstitial, because we pre-install a permanent
+    exception for every HTTPS origin (the same override Firefox records
+    when a user clicks *Accept the Risk and Continue*).
+
+How it works
+------------
+
+We can't write ``logins.json`` ourselves on Ubuntu 24.04: NSS 3.98's
+``PK11SDR_Encrypt`` segfaults when it tries to lazily create the SDR key on
+a fresh key4.db (reproducible in pure C). The workaround is to let Firefox
+itself be the one encrypting, because *its* code paths handle the fresh-DB
+case fine.
+
+So we:
+  1. Launch Firefox once, headless, with the Marionette remote protocol
+     enabled (``--marionette --remote-allow-system-access``).
+  2. Switch to the privileged "chrome" context and call
+     ``Services.logins.addLoginAsync()`` for every credential.
+  3. Shut Firefox down cleanly via Marionette's ``Marionette:Quit`` so it
+     flushes ``logins.json`` (and ``logins.db``) to disk.
+
+Prerequisites
+-------------
+  - Firefox is installed (``/usr/bin/firefox``).
+  - The ``marionette_driver`` Python package is installed system-wide:
+    ``pip3 install --break-system-packages marionette_driver``.
+  - No other Firefox instance is holding port 2828 or the target profile.
+
+Usage
+-----
+    cbsoc-seed-firefox-logins <profile-dir>
+        [--ip HOST]
+        [--creds PATH]
+        [--cert-exceptions PATH]
+
+The credentials catalog (``--creds``)::
+
+    [
+      { "name": "Wazuh",
+        "origin": "https://__IP__:7001",
+        "username": "admin",
+        "password": "SecretPassword" },
+      ...
+    ]
+
+The cert-exceptions catalog (``--cert-exceptions``)::
+
+    [
+      { "name": "Wazuh",     "origin": "https://__IP__:7001" },
+      { "name": "Portainer", "origin": "https://__IP__:9443" },
+      ...
+    ]
+
+The literal ``__IP__`` in ``origin`` is substituted with ``--ip`` (or the
+host's primary IPv4 if omitted).
+"""
+
+import argparse
+import base64
+import contextlib
+import json
+import os
+import re
+import shutil
+import signal
+import socket
+import ssl
+import subprocess
+import sys
+import time
+from urllib.parse import urlparse
+
+
+MARIONETTE_PORT = 2828
+FIREFOX_BIN     = shutil.which("firefox") or "/usr/bin/firefox"
+
+
+# ---------------------------------------------------------------------------
+# helpers
+# ---------------------------------------------------------------------------
+
+def _primary_ipv4():
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.connect(("8.8.8.8", 80))
+        ip = s.getsockname()[0]
+        s.close()
+        return ip
+    except OSError:
+        return "127.0.0.1"
+
+
+def _load_catalog(path, ip):
+    with open(path) as f:
+        catalog = json.load(f)
+    out = []
+    for entry in catalog:
+        e = dict(entry)
+        e["origin"] = e["origin"].replace("__IP__", ip)
+        out.append(e)
+    return out
+
+
+def _fetch_server_cert(host, port, timeout=4):
+    """Return the server's leaf cert as base64-encoded DER, or None.
+
+    We explicitly disable verification because these are the exact
+    self-signed certs we're about to tell Firefox to trust anyway — if
+    verification worked we wouldn't need an override.
+    """
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as sock:
+            with ctx.wrap_socket(sock, server_hostname=host) as tls:
+                der = tls.getpeercert(binary_form=True)
+        return base64.b64encode(der).decode("ascii")
+    except (OSError, ssl.SSLError) as e:
+        print(f"  ! cert fetch {host}:{port}: {e}", file=sys.stderr)
+        return None
+
+
+def _build_cert_overrides(exceptions):
+    """Resolve each exception entry to (host, port, derB64). Filters out
+    entries whose cert couldn't be fetched (service down, port closed)."""
+    jobs = []
+    for entry in exceptions:
+        url = urlparse(entry["origin"])
+        if url.scheme != "https":
+            continue
+        host = url.hostname
+        port = url.port or 443
+        der  = _fetch_server_cert(host, port)
+        if der is None:
+            continue
+        jobs.append({"host": host, "port": port, "derB64": der,
+                     "name": entry.get("name", f"{host}:{port}")})
+    return jobs
+
+
+def _ensure_marionette_pref(profile_dir):
+    """Drop a user.js into the profile so Marionette is definitely on.
+
+    Passing ``--marionette`` on the command line is enough for current
+    Firefox, but setting the pref here is belt-and-braces against future
+    changes and makes the pref survive if Firefox is restarted without the
+    flag.
+    """
+    user_js = os.path.join(profile_dir, "user.js")
+    lines = [
+        'user_pref("marionette.enabled", true);',
+        'user_pref("signon.rememberSignons", true);',
+        'user_pref("signon.autofillForms", true);',
+        'user_pref("signon.autofillForms.http", true);',
+        'user_pref("signon.generation.enabled", false);',
+        'user_pref("signon.management.page.breach-alerts.enabled", false);',
+        'user_pref("browser.shell.checkDefaultBrowser", false);',
+        'user_pref("browser.aboutwelcome.enabled", false);',
+        'user_pref("browser.startup.homepage_override.mstone", "ignore");',
+        'user_pref("datareporting.policy.firstRunURL", "");',
+        'user_pref("trailhead.firstrun.didSeeAboutWelcome", true);',
+    ]
+    existing = ""
+    if os.path.exists(user_js):
+        with open(user_js) as f:
+            existing = f.read()
+    header = "// Managed by CyberBlueSOC — cbsoc-seed-firefox-logins.\n"
+    body = header + "\n".join(lines) + "\n"
+    if header not in existing:
+        with open(user_js, "a") as f:
+            f.write("\n" + body)
+
+
+def _wait_for_marionette(port, timeout=20):
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        try:
+            s = socket.create_connection(("127.0.0.1", port), timeout=1)
+            s.close()
+            return True
+        except OSError:
+            time.sleep(0.5)
+    return False
+
+
+@contextlib.contextmanager
+def _firefox(profile_dir, log_path):
+    """Spawn a headless Firefox with Marionette open. Cleans up on exit.
+
+    The cleanup path gives Firefox a full 20 s to exit on its own *before*
+    sending SIGTERM, because the inner Marionette driver sends
+    ``Marionette:Quit`` and Firefox needs that time to flush logins.json
+    via LoginHelper's async writer. SIGTERM mid-flush produces a 0-byte
+    logins.db and no logins.json at all (reproduced on NSS 3.98).
+    """
+    cmd = [
+        FIREFOX_BIN,
+        "--headless",
+        "--no-remote",
+        "--marionette",
+        "--remote-allow-system-access",
+        "--profile", profile_dir,
+        "about:blank",
+    ]
+    logf = open(log_path, "w")
+    proc = subprocess.Popen(
+        cmd, stdout=logf, stderr=subprocess.STDOUT,
+        preexec_fn=os.setsid,
+    )
+    try:
+        if not _wait_for_marionette(MARIONETTE_PORT):
+            raise RuntimeError(
+                f"Marionette didn't open on 127.0.0.1:{MARIONETTE_PORT} "
+                f"within 20 s. See {log_path}"
+            )
+        yield proc
+    finally:
+        # Wait for the Marionette:Quit sent inside the `with` block to
+        # take effect. We poll for up to 20 s.
+        for _ in range(40):
+            if proc.poll() is not None:
+                break
+            time.sleep(0.5)
+        if proc.poll() is None:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except OSError:
+                pass
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                proc.wait()
+        logf.close()
+
+
+# ---------------------------------------------------------------------------
+# main
+# ---------------------------------------------------------------------------
+
+ADD_LOGINS_JS = r"""
+const [creds, resolve] = arguments;
+(async () => {
+  let added = 0, skipped = 0, errors = [];
+  for (const c of creds) {
+    try {
+      // Skip if a credential for this exact (origin, user) pair already
+      // exists — re-running the seeder should be idempotent, not produce
+      // a stack of duplicate "admin / SecretPassword" rows.
+      const existing = await Services.logins.searchLoginsAsync({
+        origin: c.origin,
+      });
+      const dup = existing.some(l => l.username === c.username);
+      if (dup) { skipped++; continue; }
+
+      const li = Cc["@mozilla.org/login-manager/loginInfo;1"]
+                   .createInstance(Ci.nsILoginInfo);
+      li.init(c.origin, c.origin, null,
+              c.username, c.password,
+              c.usernameField || "", c.passwordField || "");
+      await Services.logins.addLoginAsync(li);
+      added++;
+    } catch (e) {
+      errors.push(`${c.origin}: ${e.message}`);
+    }
+  }
+  const all = await Services.logins.getAllLogins();
+  resolve({added, skipped, total: all.length, errors});
+})().catch(e => resolve({error: e.message}));
+"""
+
+# The "Accept the Risk and Continue" button users see on a self-signed
+# site calls exactly this API. Pre-registering one per tool means no
+# interstitial ever appears for our HTTPS services. The override is
+# keyed on (host, port, cert fingerprint) — if the tool's cert rotates,
+# the override auto-invalidates and we can re-run this seeder to pick
+# up the new cert.
+ADD_CERT_OVERRIDES_JS = r"""
+const [overrides, resolve] = arguments;
+(async () => {
+  const certDB = Cc["@mozilla.org/security/x509certdb;1"]
+                   .getService(Ci.nsIX509CertDB);
+  const svc    = Cc["@mozilla.org/security/certoverride;1"]
+                   .getService(Ci.nsICertOverrideService);
+  let added = 0, errors = [];
+  for (const o of overrides) {
+    try {
+      const cert = certDB.constructX509FromBase64(o.derB64);
+      // rememberValidityOverride(host, port, originAttributes, cert, isTemp)
+      // originAttributes={} = default user context. Temporary=false so the
+      // override persists to cert_override.txt + cert9.db.
+      svc.rememberValidityOverride(o.host, o.port, {}, cert, false);
+      added++;
+    } catch (e) {
+      errors.push(`${o.host}:${o.port}: ${e.message}`);
+    }
+  }
+  resolve({added, errors});
+})().catch(e => resolve({error: e.message}));
+"""
+
+
+def _drive_marionette(creds, cert_overrides):
+    """Connect to the already-running Firefox, save logins, add cert
+    overrides, then shut down cleanly."""
+    from marionette_driver.marionette import Marionette
+
+    m = Marionette(host="127.0.0.1", port=MARIONETTE_PORT)
+    m.start_session()
+    m.set_context("chrome")
+
+    login_result = m.execute_async_script(ADD_LOGINS_JS, script_args=[creds])
+    override_result = {"added": 0}
+    if cert_overrides:
+        override_result = m.execute_async_script(
+            ADD_CERT_OVERRIDES_JS, script_args=[cert_overrides])
+
+    # Before we ask Firefox to exit, force the login stores to flush.
+    # - Services.logins.initializationPromise is the async-init hook every
+    #   consumer waits on; once it resolves we know both the SQLite
+    #   (logins.db) and JSON (logins.json) backends are ready.
+    # - The cert-override service flushes synchronously during the call,
+    #   but the preference write that pins cert_override.txt to disk is
+    #   async; a 2 s event-loop sleep covers both writers.
+    # Without this pause, Marionette:Quit races the writers and the
+    # profile ends up missing logins.json and/or cert_override.txt.
+    m.execute_async_script(r"""
+      const [resolve] = arguments;
+      (async () => {
+        await Services.logins.initializationPromise;
+        await new Promise(r => setTimeout(r, 2000));
+        resolve(true);
+      })().catch(() => resolve(false));
+    """)
+
+    # Ask Firefox to shut down. Marionette:Quit returns once the shutdown
+    # sequence starts; the actual exit happens asynchronously and is what
+    # the outer context manager waits for.
+    try:
+        m._send_message("Marionette:Quit", {"flags": ["eForceQuit"]})
+    except Exception:
+        pass
+    return login_result, override_result
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__.splitlines()[1])
+    ap.add_argument("profile_dir",
+                    help="Firefox profile directory")
+    ap.add_argument("--ip", default=None,
+                    help="Host substituted for __IP__ in origins "
+                         "(default: first local IP)")
+    ap.add_argument("--creds",
+                    default=os.environ.get(
+                        "CBSOC_LOGINS_JSON",
+                        "/usr/local/share/cyberbluesoc/firefox-logins.json",
+                    ),
+                    help="Path to credential catalog JSON")
+    ap.add_argument("--cert-exceptions",
+                    default=os.environ.get(
+                        "CBSOC_CERT_EXCEPTIONS_JSON",
+                        "/usr/local/share/cyberbluesoc/firefox-cert-exceptions.json",
+                    ),
+                    help="Path to cert-exceptions catalog JSON. HTTPS "
+                         "origins listed here will have their "
+                         "self-signed certs pre-trusted so Firefox "
+                         "doesn't show the security-risk interstitial. "
+                         "Missing file is not an error.")
+    args = ap.parse_args()
+
+    if not os.path.isdir(args.profile_dir):
+        os.makedirs(args.profile_dir, mode=0o700, exist_ok=True)
+
+    try:
+        import marionette_driver  # noqa: F401
+    except ImportError:
+        sys.exit(
+            "error: marionette_driver not installed. Run:\n"
+            "    pip3 install --break-system-packages marionette_driver"
+        )
+
+    ip = args.ip or _primary_ipv4()
+    creds = _load_catalog(args.creds, ip)
+
+    cert_overrides = []
+    if os.path.exists(args.cert_exceptions):
+        exceptions = _load_catalog(args.cert_exceptions, ip)
+        # Also include HTTPS origins from the creds file, so every
+        # credentialled HTTPS service gets a cert override for free.
+        seen = {(urlparse(e["origin"]).hostname,
+                 urlparse(e["origin"]).port or 443) for e in exceptions}
+        for c in creds:
+            u = urlparse(c["origin"])
+            if u.scheme == "https":
+                key = (u.hostname, u.port or 443)
+                if key not in seen:
+                    exceptions.append({"name": c.get("name", ""),
+                                       "origin": c["origin"]})
+                    seen.add(key)
+        print(f"fetching certs for {len(exceptions)} HTTPS origins")
+        cert_overrides = _build_cert_overrides(exceptions)
+
+    print(f"seeding {len(creds)} logins + {len(cert_overrides)} cert "
+          f"overrides into {args.profile_dir} (host={ip})")
+
+    _ensure_marionette_pref(args.profile_dir)
+
+    log_path = os.path.join(args.profile_dir, ".cbsoc-firefox-seed.log")
+    with _firefox(args.profile_dir, log_path):
+        login_result, cert_result = _drive_marionette(creds, cert_overrides)
+
+    if isinstance(login_result, dict) and "error" in login_result:
+        sys.exit(f"error (logins): {login_result['error']}")
+    if isinstance(cert_result, dict) and "error" in cert_result:
+        # Non-fatal — logins still seeded successfully.
+        print(f"  warn (cert overrides): {cert_result['error']}",
+              file=sys.stderr)
+
+    print(f"  logins: added={login_result.get('added', 0)} "
+          f"skipped={login_result.get('skipped', 0)} "
+          f"total_in_profile={login_result.get('total', 0)}")
+    print(f"  certs:  added={cert_result.get('added', 0)}")
+    for e in login_result.get("errors", []) + cert_result.get("errors", []):
+        print(f"  ! {e}", file=sys.stderr)
+
+
+if __name__ == "__main__":
+    main()

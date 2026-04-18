@@ -791,7 +791,13 @@ services:
     ports:
       - "7009:8888"
     volumes:
-      - ./caldera/conf/local.yml:/usr/src/app/conf/local.yml:ro
+      # NOTE: must be writable, NOT :ro. Modern caldera (>= 5.x) calls
+      # BaseWorld.apply_config(apply_hash=True) which rewrites conf/local.yml
+      # on startup (adds a config hash used for integrity checks). With :ro
+      # the container crashes with `OSError: Read-only file system:
+      # 'conf/local.yml'` on every boot. This bug is arch-agnostic - seen on
+      # both amd64 and arm64 - but surfaced during the arm64 smoke test.
+      - ./caldera/conf/local.yml:/usr/src/app/conf/local.yml
       - ./caldera/data:/usr/src/app/data
       - ./caldera/logs:/usr/src/app/logs
     networks:

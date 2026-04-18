@@ -118,8 +118,37 @@ build_one wazuh-indexer
 build_one wazuh-manager
 build_one wazuh-dashboard
 
+# -----------------------------------------------------------------------------
+# wazuh-certs-generator (one-shot TLS bootstrap container)
+# -----------------------------------------------------------------------------
+# docker-compose.yml pulls wazuh/wazuh-certs-generator:0.0.2 from Docker Hub.
+# Wazuh only publishes that tag for linux/amd64, so on arm64 hosts the compose
+# up pulls the amd64 manifest and crashes immediately with
+#   `exec /entrypoint.sh: exec format error`.
+# Without it the certs directory is never populated, and wazuh-indexer then
+# fails with `/usr/share/wazuh-indexer/certs/root-ca.pem - is a directory`
+# (docker creates empty dirs for missing bind-mount targets) - the whole
+# wazuh stack stays in a crash loop.
+#
+# The vendored Dockerfile at CyberBlue/wazuh/indexer-certs-creator/ is a thin
+# ubuntu:focal image (multi-arch) + entrypoint.sh. Build it locally with the
+# exact tag compose expects; no buildx cache, just `docker build` because
+# the context has no BuildKit-specific features and we want to keep the image
+# in the local docker engine (not in buildx's internal store).
+echo
+echo "[wazuh-arm64-build] ---- wazuh-certs-generator ----"
+CERTGEN_CONTEXT="${SCRIPT_DIR}/indexer-certs-creator"
+CERTGEN_TAG="wazuh/wazuh-certs-generator:0.0.2"
+if [ -d "$CERTGEN_CONTEXT" ]; then
+    echo "[wazuh-arm64-build] context: ${CERTGEN_CONTEXT}"
+    echo "[wazuh-arm64-build] tag:     ${CERTGEN_TAG}"
+    docker buildx build --platform linux/arm64 --load -t "${CERTGEN_TAG}" "${CERTGEN_CONTEXT}"
+else
+    echo "[wazuh-arm64-build] WARNING: indexer-certs-creator/ not found - wazuh-cert-genrator will crash on arm64"
+fi
+
 echo
 echo "========================================================================"
 echo "[wazuh-arm64-build] Complete. Images:"
-docker images | grep -E "^wazuh/(wazuh-manager|wazuh-indexer|wazuh-dashboard)\s+${WAZUH_IMAGE_VERSION}" || true
+docker images | grep -E "^wazuh/(wazuh-manager|wazuh-indexer|wazuh-dashboard|wazuh-certs-generator)\s+" || true
 echo "========================================================================"

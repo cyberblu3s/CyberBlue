@@ -33,9 +33,25 @@ if [ "$(id -u)" -ne 0 ]; then
 fi
 
 ARCH="$(dpkg --print-architecture)"
+# Arch-specific asset names for every upstream project we fetch a binary from.
+# Keep this case block as the single source of truth — touching a download URL
+# in the body of the script should almost always reduce to referencing one of
+# these variables, not hardcoding amd64 / x86_64 / arm64 anywhere else.
 case "$ARCH" in
-  amd64) GO_ARCH="amd64"; ZIRC_ARCH="x64" ;;
-  arm64) GO_ARCH="arm64"; ZIRC_ARCH="arm64" ;;
+  amd64)
+    GO_ARCH="amd64"        # Nuclei, other Go single-binary releases
+    ZIRC_ARCH="x64"        # Zircolite prebuilt (currently unused — we clone)
+    CHAINSAW_ARCH="x86_64-unknown-linux-gnu"
+    HAYABUSA_ARCH="lin-x64-gnu"
+    STRATUS_ARCH="Linux_x86_64"
+    ;;
+  arm64)
+    GO_ARCH="arm64"
+    ZIRC_ARCH="arm64"
+    CHAINSAW_ARCH="aarch64-unknown-linux-gnu"
+    HAYABUSA_ARCH="lin-aarch64-gnu"
+    STRATUS_ARCH="Linux_arm64"
+    ;;
   *) echo "Unsupported arch: $ARCH"; exit 1 ;;
 esac
 
@@ -161,18 +177,22 @@ apt-get install -y \
   hashdeep ssdeep \
   hexedit bsdmainutils \
   dc3dd
-# bulk-extractor: not in apt on Ubuntu 24.04. Ship a static prebuilt binary
-# (built by the upstream project) if not already installed.
+# bulk-extractor: not in apt on Ubuntu 24.04. Upstream ships a Linux binary
+# for amd64 only; on arm64 we skip (source build is possible but heavy — a
+# `./configure && make` over ~15 min — defer to ARM64_AUDIT.md guidance).
 if ! command -v bulk_extractor >/dev/null 2>&1; then
-  TMP=$(mktemp -d)
-  # Upstream releases Linux binaries; fall back silently if unavailable
-  if curl -fsSL --connect-timeout 5 -o "$TMP/be.zip" \
-      "https://github.com/simsong/bulk_extractor/releases/latest/download/bulk_extractor-linux-x86_64.zip" 2>/dev/null; then
-    unzip -q -o "$TMP/be.zip" -d "$TMP" 2>/dev/null && \
-      find "$TMP" -type f -name bulk_extractor -perm -u+x \
-        -exec install -m 0755 {} /usr/local/bin/bulk_extractor \; 2>/dev/null || true
+  if [ "$ARCH" = "amd64" ]; then
+    TMP=$(mktemp -d)
+    if curl -fsSL --connect-timeout 5 -o "$TMP/be.zip" \
+        "https://github.com/simsong/bulk_extractor/releases/latest/download/bulk_extractor-linux-x86_64.zip" 2>/dev/null; then
+      unzip -q -o "$TMP/be.zip" -d "$TMP" 2>/dev/null && \
+        find "$TMP" -type f -name bulk_extractor -perm -u+x \
+          -exec install -m 0755 {} /usr/local/bin/bulk_extractor \; 2>/dev/null || true
+    fi
+    rm -rf "$TMP"
+  else
+    echo "    bulk_extractor: prebuilt binary is amd64-only; source build deferred on $ARCH (see tools/native/ARM64_AUDIT.md)"
   fi
-  rm -rf "$TMP"
 fi
 command -v bulk_extractor >/dev/null 2>&1 && echo "    bulk_extractor installed" || \
   echo "    bulk_extractor: skipped (not in apt and no prebuilt binary fetched; build from source if needed)"
@@ -187,7 +207,7 @@ if ! command -v chainsaw >/dev/null 2>&1; then
   CHAINSAW_VER="$(curl -fsSL https://api.github.com/repos/WithSecureLabs/chainsaw/releases/latest | jq -r .tag_name | sed 's/^v//')"
   TMP=$(mktemp -d)
   curl -fsSL -o "$TMP/chainsaw.zip" \
-    "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_x86_64-unknown-linux-gnu.tar.gz" \
+    "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_${CHAINSAW_ARCH}.tar.gz" \
     || curl -fsSL -o "$TMP/chainsaw.zip" \
        "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_all_platforms+rules+examples.zip"
   # Handle either .tar.gz or .zip gracefully
@@ -196,7 +216,7 @@ if ! command -v chainsaw >/dev/null 2>&1; then
     BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
   else
     unzip -q -o "$TMP/chainsaw.zip" -d "$TMP"
-    BIN="$(find "$TMP" -type f -name 'chainsaw_x86_64-unknown-linux-gnu' | head -n 1 || true)"
+    BIN="$(find "$TMP" -type f -name "chainsaw_${CHAINSAW_ARCH}" | head -n 1 || true)"
     [ -n "$BIN" ] || BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
   fi
   if [ -n "$BIN" ] && [ -f "$BIN" ]; then
@@ -208,15 +228,15 @@ if ! command -v chainsaw >/dev/null 2>&1; then
 fi
 command -v chainsaw >/dev/null 2>&1 && chainsaw --version 2>&1 | head -n 1 || true
 
-# Hayabusa (single Rust binary; pick the lin-x64-gnu zip, chmod after extract)
+# Hayabusa (single Rust binary; pick $HAYABUSA_ARCH variant, chmod after extract)
 if ! command -v hayabusa >/dev/null 2>&1; then
   HAYA_VER="$(curl -fsSL https://api.github.com/repos/Yamato-Security/hayabusa/releases/latest | jq -r .tag_name | sed 's/^v//')"
   TMP=$(mktemp -d)
   if curl -fsSL --connect-timeout 10 -o "$TMP/haya.zip" \
-      "https://github.com/Yamato-Security/hayabusa/releases/download/v${HAYA_VER}/hayabusa-${HAYA_VER}-lin-x64-gnu.zip"; then
+      "https://github.com/Yamato-Security/hayabusa/releases/download/v${HAYA_VER}/hayabusa-${HAYA_VER}-${HAYABUSA_ARCH}.zip"; then
     unzip -q -o "$TMP/haya.zip" -d "$TMP"
     # Binary inside zip may lack +x; find by name, not by permissions
-    BIN="$(find "$TMP" -type f -name 'hayabusa*lin-x64-gnu*' ! -name '*.zip' | head -n 1 || true)"
+    BIN="$(find "$TMP" -type f -name "hayabusa*${HAYABUSA_ARCH}*" ! -name '*.zip' | head -n 1 || true)"
     [ -z "$BIN" ] && BIN="$(find "$TMP" -type f -name 'hayabusa*' ! -name '*.zip' ! -name '*.md' | head -n 1 || true)"
     if [ -n "$BIN" ]; then
       install -m 0755 "$BIN" /usr/local/bin/hayabusa
@@ -455,7 +475,7 @@ if ! command -v stratus >/dev/null 2>&1; then
   if [ -n "$STR_VER" ] && [ "$STR_VER" != "null" ]; then
     TMP=$(mktemp -d)
     if curl -fsSL -o "$TMP/s.tgz" \
-        "https://github.com/DataDog/stratus-red-team/releases/download/v${STR_VER}/stratus-red-team_Linux_x86_64.tar.gz"; then
+        "https://github.com/DataDog/stratus-red-team/releases/download/v${STR_VER}/stratus-red-team_${STRATUS_ARCH}.tar.gz"; then
       tar -C "$TMP" -xzf "$TMP/s.tgz" 2>/dev/null || true
       BIN="$(find "$TMP" -type f -name stratus -perm -u+x | head -n 1 || true)"
       [ -n "$BIN" ] && install -m 0755 "$BIN" /usr/local/bin/stratus
@@ -543,7 +563,13 @@ fi
 # Wazuh / Elastic can ingest. Optional — only adds repo + package; does NOT
 # enable the service by default. Start with `systemctl enable --now sysmon`.
 echo "==> [16/17] Linux endpoint telemetry (Sysmon for Linux)"
-if ! command -v sysmon >/dev/null 2>&1; then
+# Microsoft ships sysmonforlinux amd64 only on packages.microsoft.com
+# (HTTP 404 for arm64). Skip cleanly on arm64 — per
+# cyberblue-multi-arch-policy.mdc this is a locked amd64-only exception;
+# on arm64 the mitigation is Falco (multi-arch) + auditd for host telemetry.
+if [ "$ARCH" != "amd64" ]; then
+  echo "    sysmonforlinux: amd64-only upstream; skipped on $ARCH (mitigation: Falco + auditd)"
+elif ! command -v sysmon >/dev/null 2>&1; then
   UBU_REL="$(lsb_release -rs 2>/dev/null || echo 24.04)"
   # The Microsoft Linux package repo: works for 22.04 and 24.04. Add only once.
   if [ ! -f /etc/apt/sources.list.d/microsoft-prod.list ]; then
@@ -567,7 +593,9 @@ fi
 # Zui is the modern successor to Brim: desktop Electron app for exploring
 # pcap + zeek + suricata logs with a SQL-like query language. GUI-only, so we
 # only fetch it when a desktop environment is present.
-if [ "$HAS_DESKTOP" = "yes" ]; then
+if [ "$HAS_DESKTOP" = "yes" ] && [ "$ARCH" != "amd64" ]; then
+  echo "==> [17/17] Brim/Zui: skipped on $ARCH (upstream publishes Linux .deb for amd64 only; use zeek-cli / zeek-cut / tshark for pcap pivoting on arm64)"
+elif [ "$HAS_DESKTOP" = "yes" ]; then
   echo "==> [17/17] Brim/Zui (pcap + zeek log explorer)"
   if ! command -v zui >/dev/null 2>&1 && ! dpkg -s zui >/dev/null 2>&1; then
     ZUI_VER="$(curl -fsSL https://api.github.com/repos/brimdata/zui/releases/latest | jq -r .tag_name | sed 's/^v//')"

@@ -3,10 +3,14 @@ FROM amazonlinux:2023
 
 RUN rm /bin/sh && ln -s /bin/bash /bin/sh
 
-# TARGETARCH is automatically provided by docker buildx / BuildKit when
-# building with --platform linux/amd64 or linux/arm64. S6_ARCH maps Docker's
-# convention (amd64/arm64) onto s6-overlay's convention (amd64/aarch64).
-ARG TARGETARCH=amd64
+# Arch-aware s6-overlay install - detect host arch at RUN time via rpm.
+# We previously used `ARG TARGETARCH=amd64` + BuildKit substitution, but
+# `docker compose up --build` does not reliably populate the BuildKit
+# TARGETARCH built-in across all Docker versions, so the default (amd64)
+# was being baked into arm64 image builds, producing an amd64 s6-overlay
+# tarball that crashed at runtime with `exec /init: exec format error`.
+# Detecting via `rpm --eval '%{_arch}'` (on amazonlinux) runs inside the
+# container at build time and always reflects the actual build platform.
 ARG WAZUH_VERSION
 ARG WAZUH_TAG_REVISION
 ARG FILEBEAT_TEMPLATE_BRANCH
@@ -30,12 +34,15 @@ RUN yum install wazuh-manager-${WAZUH_VERSION}-${WAZUH_TAG_REVISION} -y && \
     chmod 775 /filebeat_module.sh && \
     source /filebeat_module.sh && \
     rm /filebeat_module.sh && \
-    # Map Docker TARGETARCH (amd64/arm64) to s6-overlay's asset name
-    # (amd64/aarch64). Fail loud on any other arch.
-    case "${TARGETARCH}" in \
-        amd64)   S6_ARCH="amd64" ;; \
-        arm64)   S6_ARCH="aarch64" ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}"; exit 1 ;; \
+    # Detect the actual runtime arch from rpm (amazonlinux base) and map it
+    # to s6-overlay's asset naming. rpm _arch returns: x86_64 | aarch64.
+    # s6-overlay publishes: amd64 (for x86_64) | aarch64. Fail loud on any
+    # other arch - we don't build for 32-bit / ppc64 / s390x.
+    S6_ARCH="$(rpm --eval '%{_arch}')" && \
+    case "${S6_ARCH}" in \
+        x86_64)  S6_ARCH="amd64" ;; \
+        aarch64) S6_ARCH="aarch64" ;; \
+        *) echo "Unsupported build arch: ${S6_ARCH}"; exit 1 ;; \
     esac && \
     curl --fail --silent -L "https://github.com/just-containers/s6-overlay/releases/download/${S6_VERSION}/s6-overlay-${S6_ARCH}.tar.gz" \
         -o "/tmp/s6-overlay-${S6_ARCH}.tar.gz" && \

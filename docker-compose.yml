@@ -64,7 +64,15 @@ services:
   # mergecap come along for free. See ENHANCEMENTS.md for the migration notes.
 
   suricata:
-    image: stamus/suricata:latest
+    # NOTE: switched from stamus/suricata:latest to jasonish/suricata:latest
+    # because stamus publishes an amd64-only manifest on Docker Hub. On arm64
+    # hosts, `docker compose up` pulls the amd64 image anyway (no manifest
+    # mismatch check by default) and the container crashes at startup with
+    # `exec /usr/bin/suricata: exec format error`. jasonish/suricata is the
+    # de-facto community multi-arch image (linux/amd64 + linux/arm64, same
+    # maintainer as evebox below) and uses the same CLI + config layout, so
+    # the mount points and `command:` line remain unchanged.
+    image: jasonish/suricata:latest
     container_name: suricata
     network_mode: "host" # Use only if you want to sniff actual host traffic
     volumes:

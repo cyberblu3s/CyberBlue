@@ -961,7 +961,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/ubuntu/CyberBlueSOCx
+WorkingDirectory=/home/ubuntu/CyberBlue
 ExecStartPre=/bin/bash -c 'timeout 30 bash -c "until docker info >/dev/null 2>&1; do sleep 2; done"'
 ExecStart=/bin/bash -c 'if docker ps -a --format "{{.Names}}" | grep -q "^caldera$"; then docker start caldera; else echo "Caldera container not found"; fi'
 ExecStop=/usr/bin/docker stop caldera

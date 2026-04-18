@@ -67,6 +67,65 @@ install -m 0755 "$SCRIPT_DIR/bin/cbsoc-seed-firefox-logins" "$BIN_DIR/cbsoc-seed
 install -m 0644 "$SCRIPT_DIR/firefox-logins.json"         "$SHARE_DIR/firefox-logins.json"
 install -m 0644 "$SCRIPT_DIR/firefox-cert-exceptions.json" "$SHARE_DIR/firefox-cert-exceptions.json"
 
+# ---------------------------------------------------------------- 1b. branded wallpaper
+#
+# Install the CyberBlueSOC wallpaper to /usr/share/backgrounds/cyberbluesoc/
+# and seed the XFCE desktop config with it — but only if no wallpaper config
+# exists yet. If iso/scripts/buildbox-bootstrap.sh already wrote the xml
+# (AWS/ISO path), we leave that alone. The icons-hide step later merges
+# into whatever config is present, so both code paths converge.
+#
+# The asset ships inside the repo at tools/native/desktop/branding/ so a
+# standalone clone + `sudo bash install-desktop.sh` on any XFCE host
+# produces the branded look without extra files.
+
+WALLPAPER_SRC="$SCRIPT_DIR/branding/cyberbluesoc-wallpaper.png"
+WALLPAPER_DST_DIR="/usr/share/backgrounds/cyberbluesoc"
+WALLPAPER_DST="$WALLPAPER_DST_DIR/cyberbluesoc-wallpaper.png"
+if [[ -f "$WALLPAPER_SRC" ]]; then
+  echo "==> Installing CyberBlueSOC wallpaper → $WALLPAPER_DST"
+  install -d -m 0755 "$WALLPAPER_DST_DIR"
+  install -m 0644 "$WALLPAPER_SRC" "$WALLPAPER_DST"
+  # Also ship the logo next to it so the welcome dashboard / about dialogs
+  # can pick it up by path if they want a raster.
+  if [[ -f "$SCRIPT_DIR/branding/cyberbluesoc-logo.png" ]]; then
+    install -m 0644 "$SCRIPT_DIR/branding/cyberbluesoc-logo.png" \
+      "$WALLPAPER_DST_DIR/cyberbluesoc-logo.png"
+  fi
+  XFCE_DESKTOP_XML_INIT="$TARGET_HOME/.config/xfce4/xfconf/xfce-perchannel-xml/xfce4-desktop.xml"
+  if [[ ! -f "$XFCE_DESKTOP_XML_INIT" ]]; then
+    install -d -m 0700 -o "$TARGET_USER" -g "$TARGET_USER" \
+      "$(dirname "$XFCE_DESKTOP_XML_INIT")"
+    cat > "$XFCE_DESKTOP_XML_INIT" <<XML
+<?xml version="1.0" encoding="UTF-8"?>
+<channel name="xfce4-desktop" version="1.0">
+  <property name="backdrop" type="empty">
+    <property name="screen0" type="empty">
+      <property name="monitorVNC-0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="$WALLPAPER_DST"/>
+        </property>
+      </property>
+      <property name="monitor0" type="empty">
+        <property name="workspace0" type="empty">
+          <property name="color-style" type="int" value="0"/>
+          <property name="image-style" type="int" value="5"/>
+          <property name="last-image" type="string" value="$WALLPAPER_DST"/>
+        </property>
+      </property>
+    </property>
+  </property>
+</channel>
+XML
+    chown "$TARGET_USER:$TARGET_USER" "$XFCE_DESKTOP_XML_INIT"
+    chmod 0644 "$XFCE_DESKTOP_XML_INIT"
+  fi
+else
+  echo "==> Wallpaper asset missing ($WALLPAPER_SRC); skipping wallpaper install."
+fi
+
 # ---------------------------------------------------------------- 2. systemd
 
 echo "==> Installing status-refresh systemd timer"

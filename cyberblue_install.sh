@@ -268,6 +268,15 @@ if $PREREQS_NEEDED; then
     echo -e "${CYAN}   [SERVICE]${NC} Enabling Docker service..."
     sudo systemctl enable docker 2>&1 | head -3 | while read line; do echo -e "${CYAN}   [SYSTEMD]${NC} $line"; done
     sudo systemctl start docker
+    # Force socket re-creation so it inherits root:docker ownership even on
+    # boxes where docker.service came up before usermod -aG took effect.
+    # Without this the socket can stay owned by a numeric uid (1001:1001 on
+    # fresh Ubuntu 24.04 arm64), which breaks `docker ps` with "permission
+    # denied" for the install user — see docs/TROUBLESHOOTING.md.
+    sudo systemctl restart docker.socket 2>/dev/null || true
+    sleep 1
+    sudo chown root:docker /var/run/docker.sock 2>/dev/null || true
+    sudo chmod 660 /var/run/docker.sock 2>/dev/null || true
     echo -e "${GREEN}✅ Docker permissions configured${NC}"
     
     echo ""

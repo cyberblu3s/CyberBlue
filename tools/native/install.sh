@@ -57,6 +57,28 @@ esac
 
 export DEBIAN_FRONTEND=noninteractive
 
+# _latest_release_with_asset <owner/repo> <asset-name-regex>
+#
+# Walks the 20 most recent non-draft / non-prerelease releases of a GitHub
+# repository and prints the tag_name of the newest one that has an asset
+# whose filename matches <asset-name-regex>. Empty output means "no match
+# in the window".
+#
+# Why this helper exists: upstream projects occasionally publish a tag
+# where the release-build CI partially failed and only metadata / checksum
+# files were uploaded (observed 2026-04-18 with nuclei v3.8.0, which ships
+# only nuclei_3.8.0_checksums.txt — no per-arch zips). Naively pulling
+# /releases/latest in that case yields an empty version / a 404. This
+# helper keeps the installer resilient across both arm64 and amd64 for
+# every GitHub-release download below (nuclei, chainsaw, hayabusa,
+# stratus, zui).
+_latest_release_with_asset() {
+  local repo="$1" pattern="$2"
+  curl -fsSL "https://api.github.com/repos/${repo}/releases?per_page=20" 2>/dev/null \
+    | jq -r --arg pat "$pattern" \
+        '[.[] | select(.draft==false and .prerelease==false) | select(any(.assets[]?.name; test($pat)))][0].tag_name // empty'
+}
+
 apt-get update -qq
 
 # =============================================================================
@@ -74,13 +96,19 @@ apt-get install -y \
 # =============================================================================
 echo "==> [2/11] Nuclei"
 if ! command -v nuclei >/dev/null 2>&1; then
-  NUCLEI_VERSION="$(curl -fsSL https://api.github.com/repos/projectdiscovery/nuclei/releases/latest | jq -r .tag_name | sed 's/^v//')"
-  TMP=$(mktemp -d)
-  curl -fsSL -o "$TMP/nuclei.zip" \
-    "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${GO_ARCH}.zip"
-  unzip -q -o "$TMP/nuclei.zip" -d "$TMP"
-  install -m 0755 "$TMP/nuclei" /usr/local/bin/nuclei
-  rm -rf "$TMP"
+  NUCLEI_TAG="$(_latest_release_with_asset projectdiscovery/nuclei "nuclei_.*_linux_${GO_ARCH}\\.zip$")"
+  NUCLEI_VERSION="${NUCLEI_TAG#v}"
+  if [ -n "$NUCLEI_VERSION" ]; then
+    TMP=$(mktemp -d)
+    if curl -fsSL -o "$TMP/nuclei.zip" \
+        "https://github.com/projectdiscovery/nuclei/releases/download/v${NUCLEI_VERSION}/nuclei_${NUCLEI_VERSION}_linux_${GO_ARCH}.zip"; then
+      unzip -q -o "$TMP/nuclei.zip" -d "$TMP"
+      install -m 0755 "$TMP/nuclei" /usr/local/bin/nuclei
+    fi
+    rm -rf "$TMP"
+  else
+    echo "    nuclei: no recent release has a linux_${GO_ARCH} asset; skipping"
+  fi
 fi
 nuclei -version 2>&1 | head -n 1 || true
 nuclei -update-templates -silent || true
@@ -204,25 +232,31 @@ echo "==> [9/11] Windows triage (chainsaw, hayabusa, zircolite, regripper)"
 
 # Chainsaw (single Rust binary)
 if ! command -v chainsaw >/dev/null 2>&1; then
-  CHAINSAW_VER="$(curl -fsSL https://api.github.com/repos/WithSecureLabs/chainsaw/releases/latest | jq -r .tag_name | sed 's/^v//')"
+  CHAINSAW_TAG="$(_latest_release_with_asset WithSecureLabs/chainsaw "chainsaw_${CHAINSAW_ARCH}\\.tar\\.gz$")"
+  CHAINSAW_VER="${CHAINSAW_TAG#v}"
   TMP=$(mktemp -d)
-  curl -fsSL -o "$TMP/chainsaw.zip" \
-    "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_${CHAINSAW_ARCH}.tar.gz" \
-    || curl -fsSL -o "$TMP/chainsaw.zip" \
-       "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_all_platforms+rules+examples.zip"
+  if [ -n "$CHAINSAW_VER" ]; then
+    curl -fsSL -o "$TMP/chainsaw.zip" \
+      "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_${CHAINSAW_ARCH}.tar.gz" \
+      || curl -fsSL -o "$TMP/chainsaw.zip" \
+         "https://github.com/WithSecureLabs/chainsaw/releases/download/v${CHAINSAW_VER}/chainsaw_all_platforms+rules+examples.zip"
+  fi
   # Handle either .tar.gz or .zip gracefully
-  if file "$TMP/chainsaw.zip" | grep -q gzip; then
-    tar -C "$TMP" -xzf "$TMP/chainsaw.zip"
-    BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
-  else
-    unzip -q -o "$TMP/chainsaw.zip" -d "$TMP"
-    BIN="$(find "$TMP" -type f -name "chainsaw_${CHAINSAW_ARCH}" | head -n 1 || true)"
-    [ -n "$BIN" ] || BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
+  BIN=""
+  if [ -s "$TMP/chainsaw.zip" ]; then
+    if file "$TMP/chainsaw.zip" | grep -q gzip; then
+      tar -C "$TMP" -xzf "$TMP/chainsaw.zip"
+      BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
+    else
+      unzip -q -o "$TMP/chainsaw.zip" -d "$TMP"
+      BIN="$(find "$TMP" -type f -name "chainsaw_${CHAINSAW_ARCH}" | head -n 1 || true)"
+      [ -n "$BIN" ] || BIN="$(find "$TMP" -type f -name chainsaw -perm -u+x | head -n 1 || true)"
+    fi
   fi
   if [ -n "$BIN" ] && [ -f "$BIN" ]; then
     install -m 0755 "$BIN" /usr/local/bin/chainsaw
   else
-    echo "    chainsaw binary not found in release, skipping"
+    echo "    chainsaw: no recent release has a ${CHAINSAW_ARCH} asset (or download failed); skipping"
   fi
   rm -rf "$TMP"
 fi
@@ -230,9 +264,10 @@ command -v chainsaw >/dev/null 2>&1 && chainsaw --version 2>&1 | head -n 1 || tr
 
 # Hayabusa (single Rust binary; pick $HAYABUSA_ARCH variant, chmod after extract)
 if ! command -v hayabusa >/dev/null 2>&1; then
-  HAYA_VER="$(curl -fsSL https://api.github.com/repos/Yamato-Security/hayabusa/releases/latest | jq -r .tag_name | sed 's/^v//')"
+  HAYA_TAG="$(_latest_release_with_asset Yamato-Security/hayabusa "hayabusa-.*-${HAYABUSA_ARCH}\\.zip$")"
+  HAYA_VER="${HAYA_TAG#v}"
   TMP=$(mktemp -d)
-  if curl -fsSL --connect-timeout 10 -o "$TMP/haya.zip" \
+  if [ -n "$HAYA_VER" ] && curl -fsSL --connect-timeout 10 -o "$TMP/haya.zip" \
       "https://github.com/Yamato-Security/hayabusa/releases/download/v${HAYA_VER}/hayabusa-${HAYA_VER}-${HAYABUSA_ARCH}.zip"; then
     unzip -q -o "$TMP/haya.zip" -d "$TMP"
     # Binary inside zip may lack +x; find by name, not by permissions
@@ -471,7 +506,8 @@ chmod +x /usr/local/bin/atomic-list
 # Stratus Red Team: DataDog's cloud-native adversary emulator (AWS/Azure/K8s).
 # Single Go binary.
 if ! command -v stratus >/dev/null 2>&1; then
-  STR_VER="$(curl -fsSL https://api.github.com/repos/DataDog/stratus-red-team/releases/latest | jq -r .tag_name | sed 's/^v//')"
+  STR_TAG="$(_latest_release_with_asset DataDog/stratus-red-team "stratus-red-team_${STRATUS_ARCH}\\.tar\\.gz$")"
+  STR_VER="${STR_TAG#v}"
   if [ -n "$STR_VER" ] && [ "$STR_VER" != "null" ]; then
     TMP=$(mktemp -d)
     if curl -fsSL -o "$TMP/s.tgz" \
@@ -489,8 +525,16 @@ command -v stratus >/dev/null 2>&1 && echo "    stratus installed" || echo "    
 # WinRM / LDAP auth & post-ex framework. The PyPI name only publishes
 # pre-releases sporadically, so install straight from the upstream git
 # repo — that's also what the project's own README recommends.
+#
+# NetExec pulls in aardwolf (RDP library) and pcapy-ng which need to
+# compile native extensions on install — rustc for aardwolf's PyO3
+# bindings, and libpcap headers for pcapy-ng. These land via Ubuntu
+# apt on both amd64 and arm64 (verified on arm64 UTM smoke 2026-04-18 —
+# without them the git+ install fails with "can't find Rust compiler"
+# and "Failed building wheel for pcapy-ng").
 if ! command -v nxc >/dev/null 2>&1; then
-  apt-get install -y pipx >/dev/null 2>&1 || true
+  apt-get install -y pipx rustc cargo libpcap-dev libssl-dev libffi-dev \
+    >/dev/null 2>&1 || true
   TARGET_USER="${SUDO_USER:-root}"
   _nxc_install_cmd="pipx install git+https://github.com/Pennyw0rth/NetExec"
   if [ "$TARGET_USER" != "root" ] && id "$TARGET_USER" >/dev/null 2>&1; then
@@ -598,7 +642,8 @@ if [ "$HAS_DESKTOP" = "yes" ] && [ "$ARCH" != "amd64" ]; then
 elif [ "$HAS_DESKTOP" = "yes" ]; then
   echo "==> [17/17] Brim/Zui (pcap + zeek log explorer)"
   if ! command -v zui >/dev/null 2>&1 && ! dpkg -s zui >/dev/null 2>&1; then
-    ZUI_VER="$(curl -fsSL https://api.github.com/repos/brimdata/zui/releases/latest | jq -r .tag_name | sed 's/^v//')"
+    ZUI_TAG="$(_latest_release_with_asset brimdata/zui "zui_.*_amd64\\.deb$")"
+    ZUI_VER="${ZUI_TAG#v}"
     if [ -n "$ZUI_VER" ] && [ "$ZUI_VER" != "null" ]; then
       TMP=$(mktemp -d)
       # Upstream asset name as of Zui 1.18.0 is `zui_${VER}_amd64.deb`.

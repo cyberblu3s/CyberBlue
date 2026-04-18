@@ -26,7 +26,7 @@
 | **CyberChef** | `http://YOUR_IP:7004` | No Auth | ✅ HTTP | Data Analysis |
 | **TheHive** | `http://YOUR_IP:7005` | admin@thehive.local/secret | ✅ HTTP | Case Management |
 | **Cortex** | `http://YOUR_IP:7006` | admin/cyberblue123 | ✅ HTTP | Observable Analysis |
-| **FleetDM** | `http://YOUR_IP:7007` | Setup Required | ✅ HTTP | Endpoint Management |
+| **FleetDM** | `http://YOUR_IP:7007` | Setup Required | ✅ HTTP (amd64 only) | Endpoint Management |
 | **Arkime** | `http://YOUR_IP:7008` | admin/admin | ✅ HTTP + Data | Network Analysis |
 | **Caldera** | `http://YOUR_IP:7009` | red:cyberblue, blue:cyberblue | ✅ HTTP | Adversary Emulation |
 | **EveBox** | `http://YOUR_IP:7015` | No Auth | ✅ HTTP + Events | Suricata Events |

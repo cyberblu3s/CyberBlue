@@ -55,8 +55,18 @@ ENV PORT=5500
 ENV FLASK_ENV=production
 
 # Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD curl -f http://localhost:5500/health || exit 1
+#
+# The portal listens on HTTP (port 5500) OR HTTPS (port 5443) depending on
+# the ENABLE_HTTPS env var. In docker-compose.yml we set ENABLE_HTTPS=true,
+# so Flask ONLY binds 5443 and port 5500 is not served — the old
+# "curl http://localhost:5500/health" healthcheck was always failing,
+# marking the container "unhealthy" even though the portal itself was
+# perfectly reachable at https://host:5443. Probe HTTPS first, fall back
+# to HTTP so this works in either ENABLE_HTTPS=true or =false mode.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -fks https://localhost:5443/health >/dev/null 2>&1 \
+        || curl -fs http://localhost:5500/health >/dev/null 2>&1 \
+        || exit 1
 
 # Start the application
 CMD ["python3", "app.py"] 

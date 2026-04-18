@@ -52,8 +52,14 @@ services:
       context: ./attack-navigator
       dockerfile: Dockerfile
     container_name: mitre-navigator
+    # The runtime stage (nginx:alpine) serves the compiled Angular bundle on
+    # port 80 — NOT 4200. Port 4200 is the Angular dev server port, which is
+    # only used during `npm run serve` and is never started in the prod
+    # image. Historically this mapping was "7013:4200" which resulted in
+    # connection-refused on localhost:7013 because nothing was listening on
+    # 4200 inside the container. See attack-navigator/Dockerfile EXPOSE 80.
     ports:
-      - "7013:4200"
+      - "7013:80"
     restart: unless-stopped
     networks:
       - cyber-blue
@@ -93,10 +99,17 @@ services:
   evebox:
     image: jasonish/evebox
     container_name: evebox
+    # --no-tls mirrors --no-auth: this is a lab convenience platform and
+    # every other core service is served HTTP on its 70xx port. Without
+    # --no-tls EveBox self-signs a cert on first boot and serves HTTPS on
+    # 5636, which breaks plain http://host:7015 links from the portal and
+    # README and forces users past a browser cert warning for a throwaway
+    # cert. Keep this consistent with --no-auth.
     command:
       - evebox
       - server
       - --no-auth
+      - --no-tls
       - --datastore
       - sqlite
       - --input

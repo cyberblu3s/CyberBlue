@@ -814,13 +814,44 @@ else
     echo -e "${YELLOW}     sudo docker compose ps -a${NC}"
 fi
 
+# Step 2.10a: extras stack (standard profile)
+#
+# docker-compose.extras.yml aggregates the "layered on top" services
+# (grafana, zeek, honeypots, crowdsec). Without this step grafana never
+# gets a container and users see http://host:3000 as connection-refused.
+# Kept as a separate invocation (not merged into the core compose file)
+# because:
+#   1) log attribution is clearer ("core" vs "extras" in the installer
+#      output),
+#   2) a missing arm64 manifest for a single extras image (e.g. some
+#      honeypot variants) stays non-fatal — the core stack is already up,
+#   3) operators with tight RAM budgets can skip this step by commenting
+#      out the block below without touching docker-compose.yml.
+echo ""
+echo -e "${BLUE}🧩 Step 2.10a: Extras Stack (standard profile)${NC}"
+echo -e "${CYAN}   [EXTRAS]${NC} grafana + zeek + honeypots + crowdsec"
+if sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml \
+       --profile standard up -d 2>&1 | while read line; do \
+            echo -e "${CYAN}   [EXTRAS]${NC} $line"; \
+       done; then
+    echo -e "${GREEN}✅ Extras stack deployed${NC}"
+else
+    echo -e "${YELLOW}⚠️  Extras stack partially deployed - check [EXTRAS] log above${NC}"
+    echo -e "${YELLOW}   Core stack is unaffected. Inspect missing images with:${NC}"
+    echo -e "${YELLOW}     sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard ps${NC}"
+fi
+
 echo ""
 echo -e "${BLUE}🔄 Step 2.11: Post-Deployment Stabilization${NC}"
 echo -e "${CYAN}   [SERVICE]${NC} Restarting Docker for stability..."
 sudo systemctl restart docker
 sleep 10
-echo -e "${CYAN}   [COMPOSE]${NC} Bringing services back up..."
+echo -e "${CYAN}   [COMPOSE]${NC} Bringing core services back up..."
 sudo docker compose up -d 2>&1 | while read line; do echo -e "${CYAN}   [UP]${NC} $line"; done
+echo -e "${CYAN}   [COMPOSE]${NC} Bringing extras services back up..."
+sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml \
+    --profile standard up -d 2>&1 | \
+    while read line; do echo -e "${CYAN}   [UP-EXTRAS]${NC} $line"; done || true
 echo -e "${GREEN}✅ Services stabilized${NC}"
 
 echo ""

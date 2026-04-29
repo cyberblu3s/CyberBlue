@@ -1,0 +1,7 @@
+[
+  { "name": "Wazuh",             "origin": "https://__IP__:7001" },
+  { "name": "Velociraptor",      "origin": "https://__IP__:7000" },
+  { "name": "MISP",              "origin": "https://__IP__:7003" },
+  { "name": "CyberBlue Portal",  "origin": "https://__IP__:5443" },
+  { "name": "Portainer",         "origin": "https://__IP__:9443" }
+]

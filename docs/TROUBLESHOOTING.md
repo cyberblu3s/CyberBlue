@@ -324,6 +324,62 @@ docker logs suricata
    # cap_add: NET_ADMIN, NET_RAW
    ```
 
+### Docker socket permission denied (`/var/run/docker.sock`)
+
+**Symptom:** `cyberblue status`, `docker ps`, or any compose command
+returns `permission denied while trying to connect to the Docker daemon
+socket` even though the current user is in the `docker` group.
+
+**Root cause:** On first boot the `docker` daemon can start *before* the
+`docker` group is fully propagated to the socket creator's credentials,
+leaving `/run/docker.sock` owned by a stray numeric uid (e.g. `1001:1001`)
+instead of `root:docker 0660`. Adding the user to the group, relogging,
+and even `newgrp docker` will not fix it because the socket itself has
+wrong ownership on disk. Observed on fresh Ubuntu Server 24.04 arm64
+installs (UTM VM) during Phase 4 smoke tests.
+
+**Diagnose:**
+```bash
+ls -l /var/run/docker.sock /run/docker.sock
+# Expect:  srw-rw---- 1 root docker 0 ...
+# Bad:     srw-rw---- 1 <uid> <uid>   (numeric / non-docker group)
+id -nG | tr ' ' '\n' | grep -x docker   # must print 'docker'
+```
+
+**Fix (safe, no data loss):**
+```bash
+sudo systemctl stop docker.socket docker.service
+sudo rm -f /run/docker.sock /var/run/docker.sock
+sudo systemctl start docker.socket docker.service
+ls -l /var/run/docker.sock      # should now be root:docker
+```
+Then re-run `cyberblue status`. If you were in the middle of a
+`cyberblue_install.sh` run, re-run it — the script is idempotent.
+
+### Stale `caldera-autostart.service` pointing at `CyberBlueSOCx`
+
+**Symptom:** `systemctl status caldera-autostart` shows
+`WorkingDirectory=/home/ubuntu/CyberBlueSOCx` and the service fails
+with `changing to the requested working directory failed: No such file
+or directory`.
+
+**Root cause:** Early versions of `cyberblue_install.sh` wrote a typo
+into the unit file. The typo is fixed in the repo, but the installer
+guards the unit-file write with
+`if [ ! -f /etc/systemd/system/caldera-autostart.service ]`, so hosts
+that were installed before the fix keep the broken unit on upgrade.
+
+**Fix (manual, one-liner):**
+```bash
+sudo sed -i 's|/home/ubuntu/CyberBlueSOCx|/home/ubuntu/CyberBlue|g' \
+  /etc/systemd/system/caldera-autostart.service
+sudo systemctl daemon-reload
+sudo systemctl restart caldera-autostart.service
+systemctl status caldera-autostart --no-pager
+```
+Same pattern applies to `docker-networking-fix.service` written by
+`fix-docker-external-access.sh` if upgraded from the same bad release.
+
 ---
 
 ## 🔍 **Advanced Diagnostics**

@@ -1,0 +1,26 @@
+# CyberBlueSOC Extras
+# Optional SOC capabilities layered on top of the core stack.
+# Brought up alongside docker-compose.yml using Compose profiles.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard up -d
+#   docker compose -f docker-compose.extras.yml --profile standard down
+#
+# Profiles:
+#   standard - lightweight, high-impact additions (~1 GB extra RAM)
+#   full     - heavier additions for users with 32+ GB RAM (placeholder for future tools like OpenCTI)
+#
+# Each tool lives in its own folder under tools/ with its own docker-compose.yml,
+# README, and config. This file is the aggregator.
+
+include:
+  - path: tools/zeek/docker-compose.yml
+  - path: tools/grafana/docker-compose.yml
+  - path: tools/honeypots/docker-compose.yml
+  - path: tools/crowdsec/docker-compose.yml
+  - path: tools/falco/docker-compose.yml
+
+networks:
+  default:
+    name: cyber-blue
+    external: true

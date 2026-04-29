@@ -1,0 +1,39 @@
+services:
+  cowrie:
+    image: cowrie/cowrie:latest
+    container_name: cowrie
+    profiles: [standard]
+    restart: unless-stopped
+    ports:
+      - "2222:2222"   # SSH honeypot
+      - "2223:2223"   # Telnet honeypot
+    volumes:
+      # Persist logs/downloads; do NOT shadow /cowrie/cowrie-git/etc which contains the image's own config
+      - cowrie_var:/cowrie/cowrie-git/var
+    networks:
+      - cyber-blue
+
+  opencanary:
+    image: thinkst/opencanary:latest
+    container_name: opencanary
+    profiles: [standard]
+    restart: unless-stopped
+    ports:
+      - "2121:21"     # FTP
+      - "2380:80"     # HTTP
+      - "2143:143"    # IMAP
+      - "1433:1433"   # MSSQL
+      - "5900:5900"   # VNC
+    volumes:
+      - ./opencanary/etc/opencanary.conf:/etc/opencanaryd/opencanary.conf:ro
+      - ./opencanary/var:/var/log/opencanary
+    networks:
+      - cyber-blue
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f opencanary || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  cowrie_var:

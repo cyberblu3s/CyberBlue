@@ -1,0 +1,66 @@
+services:
+  falco:
+    image: falcosecurity/falco:0.39.2
+    container_name: falco
+    profiles: [falco]
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    environment:
+      FALCO_BPF_PROBE: ""
+      HOST_ROOT: "/host"
+    volumes:
+      - /var/run/docker.sock:/host/var/run/docker.sock
+      - /dev:/host/dev
+      - /proc:/host/proc:ro
+      - /boot:/host/boot:ro
+      - /lib/modules:/host/lib/modules:ro
+      - /usr:/host/usr:ro
+      - /etc:/host/etc:ro
+      - ./config/falco.yaml:/etc/falco/falco.yaml:ro
+    command: ["/usr/bin/falco", "-c", "/etc/falco/falco.yaml"]
+    networks:
+      - cyber-blue
+    healthcheck:
+      test: ["CMD-SHELL", "pgrep -f falco || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  falcosidekick:
+    image: falcosecurity/falcosidekick:latest
+    container_name: falcosidekick
+    profiles: [falco]
+    restart: unless-stopped
+    depends_on:
+      - falco
+    environment:
+      WEBUI_URL: "http://falcosidekick-ui:2802"
+      # Wire to Shuffle (uncomment + set hook id):
+      # WEBHOOK_ADDRESS: "http://shuffle-frontend:3001/api/v1/hooks/<webhook-id>"
+    ports:
+      - "2801:2801"   # Falcosidekick API
+    networks:
+      - cyber-blue
+
+  falcosidekick-ui:
+    image: falcosecurity/falcosidekick-ui:latest
+    container_name: falcosidekick-ui
+    profiles: [falco]
+    restart: unless-stopped
+    depends_on:
+      - falcosidekick
+    environment:
+      FALCOSIDEKICK_UI_REDIS_URL: "falcosidekick-ui-redis:6379"
+    ports:
+      - "2802:2802"
+    networks:
+      - cyber-blue
+
+  falcosidekick-ui-redis:
+    image: redis/redis-stack-server:latest
+    container_name: falcosidekick-ui-redis
+    profiles: [falco]
+    restart: unless-stopped
+    networks:
+      - cyber-blue

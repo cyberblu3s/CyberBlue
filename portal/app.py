@@ -312,7 +312,6 @@ class ContainerMonitor:
             "arkime": ["arkime-test", "arkime", "cyber-blue-test-arkime-1"],
             "caldera": ["caldera", "cyber-blue-test-caldera-1"],
             "evebox": ["evebox", "cyber-blue-test-evebox-1"],
-            "wireshark": ["wireshark", "cyber-blue-test-wireshark-1"],
             "mitre": ["mitre-navigator", "cyber-blue-test-mitre-navigator-1"],
             "mitre-navigator": ["mitre-navigator", "cyber-blue-test-mitre-navigator-1"],
             "portainer": ["portainer", "cyber-blue-test-portainer-1"],
@@ -362,7 +361,6 @@ class ContainerMonitor:
             "arkime": ["arkime-test", "arkime", "cyber-blue-test-arkime-1"],
             "caldera": ["caldera", "cyber-blue-test-caldera-1"],
             "evebox": ["evebox", "cyber-blue-test-evebox-1"],
-            "wireshark": ["wireshark", "cyber-blue-test-wireshark-1"],
             "mitre": ["mitre-navigator", "cyber-blue-test-mitre-navigator-1"],
             "mitre-navigator": ["mitre-navigator", "cyber-blue-test-mitre-navigator-1"],
             "portainer": ["portainer", "cyber-blue-test-portainer-1"],
@@ -1082,19 +1080,6 @@ def get_tools():
             }
         },
         {
-            "name": "Wireshark",
-            "description": "Network protocol analyzer for deep packet inspection and network troubleshooting.",
-            "port": 7099,
-            "icon": "fas fa-filter",
-            "category": "network analysis",
-            "categoryName": "NETWORK ANALYSIS",
-            "protocols": ["https"],
-            "credentials": {
-                "username": "admin",
-                "password": "cyberblue"
-            }
-        },
-        {
             "name": "MITRE Navigator",
             "description": "Interactive ATT&CK matrix for threat modeling and attack path visualization.",
             "port": 7013,
@@ -1162,7 +1147,7 @@ def get_dashboard_metrics():
             "soar": ["shuffle", "thehive", "cortex", "caldera"],
             "cti": ["misp", "mitre-navigator"],
             "ids": ["evebox"],
-            "network analysis": ["wireshark", "arkime"],
+            "network analysis": ["arkime"],
             "utility": ["cyberchef"],
             "management": ["fleetdm", "portainer"]
         }

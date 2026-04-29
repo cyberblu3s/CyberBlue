@@ -156,7 +156,8 @@ bash misp/configure-threat-feeds.sh
 ### 📋 System Requirements
 - **RAM**: 16+ GB recommended
 - **Storage**: 150GB+ free disk space
-- **OS**: Ubuntu 22.04+ LTS (tested on 22.04.5 & 24.04.2) Ubuntu x86_64 (AMD/Intel)
+- **OS**: Ubuntu 22.04+ LTS (tested on 22.04.5 & 24.04.2)
+- **Architecture**: **amd64** (x86_64, AWS / VMware / VirtualBox / bare metal) and **arm64** (Apple Silicon via UTM, AWS Graviton, Raspberry Pi-class hardware). See [ARM64 Support](docs/ARM64_SUPPORT.md) for the dual-arch matrix and known arm64 exceptions.
 - **Network**: Internet connection for downloads
 
 ### ⚡ **Simple Installation**
@@ -178,8 +179,26 @@ chmod +x cyberblue_install.sh
 - ✅ Install YARA (523+ malware rules) and Sigma (3,047+ detection rules)
 - ✅ Configure networking and SSL certificates
 - ✅ Set up portal access (authentication removed for ease of use)
-- ✅ Works on AWS, VMware, VirtualBox, you can test others :) 
+- ✅ Works on AWS, VMware, VirtualBox, UTM (Apple Silicon), and bare metal
 - ✅ Complete setup in about 30 minutes
+
+#### Full Platform (Docker stack + native blue-team toolkit + desktop UX)
+
+For a complete Kali-like blue-team workstation experience (SIEM/SOAR + ~50
+native CLI/GUI tools + branded XFCE desktop + welcome dashboard), use the
+umbrella initializer instead. Assumes OS prerequisites are already
+installed (Docker + desktop environment for the desktop layer).
+
+```bash
+# After install-prerequisites.sh / setup-prerequisites.sh / ISO first-boot
+cd CyberBlue
+./cyberblue_init.sh
+```
+
+This chains `cyberblue_install.sh` → `tools/native/install.sh` (which
+auto-chains `tools/native/desktop/install-desktop.sh` when a desktop
+session is detected). Each stage is idempotent and independently
+runnable. Works transparently on amd64 and arm64.
 
 ### 🌐 **Access Your SOC Lab**
 
@@ -239,6 +258,8 @@ No authentication required - direct access
 - **[⚙️ Tool Configurations](docs/TOOL_CONFIGURATIONS.md)** - Advanced tool setup and customization
 - **[🔌 API Reference](docs/API_REFERENCE.md)** - Portal API documentation
 - **[🔧 Troubleshooting](docs/TROUBLESHOOTING.md)** - Common issues and solutions
+- **[🧩 ARM64 Support](docs/ARM64_SUPPORT.md)** - Dual-arch matrix, arm64 exceptions, verification commands
+- **[🛠️ Native Blue-Team Toolkit](tools/native/README.md)** - CLI/GUI tools installed alongside the container stack
 
 ---
 

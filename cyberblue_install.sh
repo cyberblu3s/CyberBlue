@@ -69,6 +69,41 @@ export UCF_FORCE_CONFFNEW=1
 export DEBIAN_PRIORITY=critical
 
 # ============================================================================
+# ARCHITECTURE DETECTION
+# ============================================================================
+# Detect host architecture so we can (a) skip amd64-only services on arm64 and
+# (b) let downstream scripts pick the right binary. Exposed as CYBERBLUE_ARCH
+# for any child process, and persisted to .env for docker-compose.
+CYBERBLUE_ARCH="$(dpkg --print-architecture 2>/dev/null || uname -m)"
+case "$CYBERBLUE_ARCH" in
+    amd64|x86_64)
+        CYBERBLUE_ARCH="amd64"
+        # Enable all amd64-only services (currently: FleetDM stack).
+        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}amd64"
+        ;;
+    arm64|aarch64)
+        CYBERBLUE_ARCH="arm64"
+        # FleetDM, Sysmon-for-Linux, etc. stay disabled on arm64.
+        ;;
+    *)
+        echo "⚠️  Unknown architecture: $CYBERBLUE_ARCH - proceeding as amd64"
+        CYBERBLUE_ARCH="amd64"
+        export COMPOSE_PROFILES="${COMPOSE_PROFILES:+${COMPOSE_PROFILES},}amd64"
+        ;;
+esac
+export CYBERBLUE_ARCH
+echo "✓ Detected architecture: $CYBERBLUE_ARCH (COMPOSE_PROFILES=${COMPOSE_PROFILES:-<none>})"
+
+# Persist to .env so docker-compose and sub-scripts pick it up.
+if [ -f "$SCRIPT_DIR/.env" ]; then
+    sed -i '/^CYBERBLUE_ARCH=/d;/^COMPOSE_PROFILES=/d' "$SCRIPT_DIR/.env" 2>/dev/null || true
+fi
+{
+    echo "CYBERBLUE_ARCH=$CYBERBLUE_ARCH"
+    [ -n "${COMPOSE_PROFILES:-}" ] && echo "COMPOSE_PROFILES=$COMPOSE_PROFILES"
+} >> "$SCRIPT_DIR/.env"
+
+# ============================================================================
 # HELPER FUNCTIONS
 # ============================================================================
 
@@ -233,6 +268,15 @@ if $PREREQS_NEEDED; then
     echo -e "${CYAN}   [SERVICE]${NC} Enabling Docker service..."
     sudo systemctl enable docker 2>&1 | head -3 | while read line; do echo -e "${CYAN}   [SYSTEMD]${NC} $line"; done
     sudo systemctl start docker
+    # Force socket re-creation so it inherits root:docker ownership even on
+    # boxes where docker.service came up before usermod -aG took effect.
+    # Without this the socket can stay owned by a numeric uid (1001:1001 on
+    # fresh Ubuntu 24.04 arm64), which breaks `docker ps` with "permission
+    # denied" for the install user — see docs/TROUBLESHOOTING.md.
+    sudo systemctl restart docker.socket 2>/dev/null || true
+    sleep 1
+    sudo chown root:docker /var/run/docker.sock 2>/dev/null || true
+    sudo chmod 660 /var/run/docker.sock 2>/dev/null || true
     echo -e "${GREEN}✅ Docker permissions configured${NC}"
     
     echo ""
@@ -611,6 +655,35 @@ if [[ ! -d "./caldera" ]]; then
         timeout 180 ./install_caldera.sh 2>&1 | while read line; do echo -e "${CYAN}   [CALDERA]${NC} $line"; done || echo "   Caldera setup completed"
     fi
 fi
+
+# --- arm64 patch: caldera's upstream Dockerfile hardcodes the amd64 Go tarball
+# ("go1.25.0.linux-amd64.tar.gz"). On arm64 hosts this downloads an amd64 Go
+# binary which then fails `go version` with exit 126 ("cannot execute binary
+# file"), aborting the compose-up build target and cascading to the rest of
+# the stack.
+#
+# Fix: swap the hardcoded URL+filename for a shell substitution that detects
+# the build-time architecture from dpkg. We deliberately use shell
+# substitution ($(dpkg --print-architecture)) rather than Docker ARG
+# TARGETARCH because `docker compose up --build` does not reliably populate
+# the BuildKit TARGETARCH built-in on every host - it depends on whether
+# compose was invoked with DOCKER_BUILDKIT=1 and whether buildx is the active
+# builder. dpkg-based detection runs inside the RUN step on whatever the
+# container base actually is, so it picks linux-amd64 / linux-arm64
+# correctly on every host without any buildx requirement.
+#
+# The patch is idempotent - grep -q guards the sed so re-runs of this step
+# (e.g. installer re-runs without a fresh caldera clone) are no-ops once
+# patched.
+if [[ -f "./caldera/Dockerfile" ]] && grep -q "go1.25.0.linux-amd64.tar.gz" ./caldera/Dockerfile; then
+    echo -e "${CYAN}   [CALDERA]${NC} Patching Dockerfile for multi-arch Go download..."
+    sed -i 's|go1.25.0.linux-amd64.tar.gz|go1.25.0.linux-$(dpkg --print-architecture).tar.gz|g' ./caldera/Dockerfile
+    if grep -q 'linux-$(dpkg --print-architecture)' ./caldera/Dockerfile; then
+        echo -e "${GREEN}   [CALDERA]${NC} ✓ Dockerfile patched - Go tarball will match build arch"
+    else
+        echo -e "${YELLOW}   [CALDERA]${NC} ⚠️  Dockerfile patch did not apply cleanly - caldera may fail on $CYBERBLUE_ARCH"
+    fi
+fi
 echo -e "${GREEN}✅ Caldera verified${NC}"
 
 echo ""
@@ -694,6 +767,31 @@ fi
 echo -e "${GREEN}✅ Agent deployment system ready${NC}"
 
 echo ""
+echo -e "${BLUE}🧱 Step 2.9a: Wazuh arm64 Image Build${NC}"
+if [ "$CYBERBLUE_ARCH" = "arm64" ]; then
+    if [ -x "wazuh/build-arm64-images.sh" ]; then
+        show_progress "Wazuh does not publish linux/arm64 images upstream - building locally (5-10 min)..."
+        # NOTE: call via sudo because `ubuntu` was only just added to the
+        # `docker` group by Step 1.2; new group membership isn't active in the
+        # current installer shell until re-login. sudo gives us root-equivalent
+        # docker access without requiring a logout/login. run_with_output
+        # preserves the real exit code via ${PIPESTATUS[0]} so a failed build
+        # won't masquerade as success (unlike a plain `| while read` pipe).
+        if run_with_output "[WAZUH-BUILD]" sudo bash wazuh/build-arm64-images.sh; then
+            echo -e "${GREEN}✅ Wazuh arm64 images built${NC}"
+        else
+            echo -e "${RED}❌ Wazuh arm64 image build FAILED - wazuh-* services will not start${NC}"
+            echo -e "${YELLOW}   Inspect: sudo bash wazuh/build-arm64-images.sh (rerun manually)${NC}"
+        fi
+    else
+        echo -e "${YELLOW}⚠️  wazuh/build-arm64-images.sh not found or not executable - skipping${NC}"
+    fi
+else
+    echo -e "${CYAN}   [WAZUH]${NC} Host is $CYBERBLUE_ARCH - upstream Wazuh images work, no local build needed"
+    echo -e "${GREEN}✅ Wazuh arm64 build skipped (expected on $CYBERBLUE_ARCH)${NC}"
+fi
+
+echo ""
 echo -e "${BLUE}🚀 Step 2.10: Container Deployment${NC}"
 echo -e "${MAGENTA}════════════════════════════════════════════════════════${NC}"
 echo -e "${MAGENTA}   📦 Building and starting 30+ containers...${NC}"
@@ -702,10 +800,45 @@ echo -e "${MAGENTA}   🎬 Watch the magic happen below:${NC}"
 echo -e "${MAGENTA}════════════════════════════════════════════════════════${NC}"
 echo ""
 
-if sudo docker compose up --build -d 2>&1 | while read line; do echo -e "${CYAN}   [DEPLOY]${NC} $line"; done; then
+# NOTE: route compose up through run_with_output (uses ${PIPESTATUS[0]}) so
+# a build failure in any service is caught as a real exit code instead of
+# being masked by the success of the trailing `while read` loop. Without
+# this, a single service (e.g. portal on arm64 if psutil can't compile)
+# causes compose to abort mid-build but the installer reports "✅ deployed"
+# and marches into Step 2.11 even though zero containers are running.
+if run_with_output "[DEPLOY]" sudo docker compose up --build -d; then
     echo -e "${GREEN}✅ All containers deployed${NC}"
 else
-    echo -e "${YELLOW}⚠️  Deployment completed with warnings${NC}"
+    echo -e "${RED}❌ Container deployment FAILED - check [DEPLOY] log above${NC}"
+    echo -e "${YELLOW}   Subsequent steps may fail or be partially applied. Inspect with:${NC}"
+    echo -e "${YELLOW}     sudo docker compose ps -a${NC}"
+fi
+
+# Step 2.10a: extras stack (standard profile)
+#
+# docker-compose.extras.yml aggregates the "layered on top" services
+# (grafana, zeek, honeypots, crowdsec). Without this step grafana never
+# gets a container and users see http://host:3000 as connection-refused.
+# Kept as a separate invocation (not merged into the core compose file)
+# because:
+#   1) log attribution is clearer ("core" vs "extras" in the installer
+#      output),
+#   2) a missing arm64 manifest for a single extras image (e.g. some
+#      honeypot variants) stays non-fatal — the core stack is already up,
+#   3) operators with tight RAM budgets can skip this step by commenting
+#      out the block below without touching docker-compose.yml.
+echo ""
+echo -e "${BLUE}🧩 Step 2.10a: Extras Stack (standard profile)${NC}"
+echo -e "${CYAN}   [EXTRAS]${NC} grafana + zeek + honeypots + crowdsec"
+if sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml \
+       --profile standard up -d 2>&1 | while read line; do \
+            echo -e "${CYAN}   [EXTRAS]${NC} $line"; \
+       done; then
+    echo -e "${GREEN}✅ Extras stack deployed${NC}"
+else
+    echo -e "${YELLOW}⚠️  Extras stack partially deployed - check [EXTRAS] log above${NC}"
+    echo -e "${YELLOW}   Core stack is unaffected. Inspect missing images with:${NC}"
+    echo -e "${YELLOW}     sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml --profile standard ps${NC}"
 fi
 
 echo ""
@@ -713,8 +846,12 @@ echo -e "${BLUE}🔄 Step 2.11: Post-Deployment Stabilization${NC}"
 echo -e "${CYAN}   [SERVICE]${NC} Restarting Docker for stability..."
 sudo systemctl restart docker
 sleep 10
-echo -e "${CYAN}   [COMPOSE]${NC} Bringing services back up..."
+echo -e "${CYAN}   [COMPOSE]${NC} Bringing core services back up..."
 sudo docker compose up -d 2>&1 | while read line; do echo -e "${CYAN}   [UP]${NC} $line"; done
+echo -e "${CYAN}   [COMPOSE]${NC} Bringing extras services back up..."
+sudo docker compose -f docker-compose.yml -f docker-compose.extras.yml \
+    --profile standard up -d 2>&1 | \
+    while read line; do echo -e "${CYAN}   [UP-EXTRAS]${NC} $line"; done || true
 echo -e "${GREEN}✅ Services stabilized${NC}"
 
 echo ""
@@ -727,25 +864,31 @@ echo ""
 echo ""
 
 echo -e "${BLUE}🔧 Step 2.12: Fleet Database Configuration${NC}"
-show_progress "Configuring Fleet database (2-3 minutes)..."
-echo ""
-timeout 600 sudo docker run --rm \
-  --network=cyber-blue \
-  -e FLEET_MYSQL_ADDRESS=fleet-mysql:3306 \
-  -e FLEET_MYSQL_USERNAME=fleet \
-  -e FLEET_MYSQL_PASSWORD=fleetpass \
-  -e FLEET_MYSQL_DATABASE=fleet \
-  fleetdm/fleet:latest fleet prepare db 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done || true
+if [ "$CYBERBLUE_ARCH" = "amd64" ]; then
+    show_progress "Configuring Fleet database (2-3 minutes)..."
+    echo ""
+    timeout 600 sudo docker run --rm \
+      --network=cyber-blue \
+      -e FLEET_MYSQL_ADDRESS=fleet-mysql:3306 \
+      -e FLEET_MYSQL_USERNAME=fleet \
+      -e FLEET_MYSQL_PASSWORD=fleetpass \
+      -e FLEET_MYSQL_DATABASE=fleet \
+      fleetdm/fleet:latest fleet prepare db 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done || true
 
-echo ""
-echo -e "${CYAN}   [FLEET]${NC} Starting Fleet server..."
-sudo docker compose up -d fleet-server 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done
-sleep 30
-echo -e "${GREEN}✅ Fleet configured${NC}"
+    echo ""
+    echo -e "${CYAN}   [FLEET]${NC} Starting Fleet server..."
+    sudo docker compose up -d fleet-server 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done
+    sleep 30
+    echo -e "${GREEN}✅ Fleet configured${NC}"
+else
+    echo -e "${YELLOW}   [FLEET]${NC} FleetDM has no arm64 image upstream - skipping on $CYBERBLUE_ARCH"
+    echo -e "${CYAN}   [FLEET]${NC} Use osquery agent directly, or run on amd64 host, for Fleet capabilities."
+    echo -e "${GREEN}✅ Fleet skipped (expected on $CYBERBLUE_ARCH)${NC}"
+fi
 
 echo ""
 echo -e "${BLUE}🔐 Step 2.12a: Fleet Enrollment Secret Configuration${NC}"
-if [ -f "fleet/configure-fleet-secret.sh" ]; then
+if [ "$CYBERBLUE_ARCH" = "amd64" ] && [ -f "fleet/configure-fleet-secret.sh" ]; then
     echo -e "${CYAN}   [FLEET]${NC} Generating and configuring enrollment secret..."
     if bash fleet/configure-fleet-secret.sh 2>&1 | while read line; do echo -e "${CYAN}   [FLEET]${NC} $line"; done; then
         echo -e "${GREEN}✅ Fleet enrollment secret configured${NC}"
@@ -756,6 +899,8 @@ if [ -f "fleet/configure-fleet-secret.sh" ]; then
     else
         echo -e "${YELLOW}⚠️  Fleet secret configuration had warnings (non-critical)${NC}"
     fi
+elif [ "$CYBERBLUE_ARCH" != "amd64" ]; then
+    echo -e "${YELLOW}   [FLEET]${NC} Skipping enrollment secret (Fleet not running on $CYBERBLUE_ARCH)"
 else
     echo -e "${YELLOW}⚠️  Fleet secret configuration script not found${NC}"
 fi
@@ -856,7 +1001,7 @@ Wants=network-online.target
 [Service]
 Type=oneshot
 RemainAfterExit=yes
-WorkingDirectory=/home/ubuntu/CyberBlueSOCx
+WorkingDirectory=/home/ubuntu/CyberBlue
 ExecStartPre=/bin/bash -c 'timeout 30 bash -c "until docker info >/dev/null 2>&1; do sleep 2; done"'
 ExecStart=/bin/bash -c 'if docker ps -a --format "{{.Names}}" | grep -q "^caldera$"; then docker start caldera; else echo "Caldera container not found"; fi'
 ExecStop=/usr/bin/docker stop caldera

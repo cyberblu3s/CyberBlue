@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh CyberBlueSOC welcome dashboard status every 30s
+
+[Timer]
+OnBootSec=20s
+OnUnitActiveSec=30s
+AccuracySec=1s
+Unit=cbsoc-status.service
+
+[Install]
+WantedBy=timers.target

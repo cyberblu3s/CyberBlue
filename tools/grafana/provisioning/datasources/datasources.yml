@@ -1,0 +1,51 @@
+apiVersion: 1
+
+# Pre-provisioned datasources for CyberBlueSOC.
+# Connects Grafana to the indexers already running in the core stack so you get
+# unified dashboards across Wazuh alerts, OpenSearch logs, and Zeek metadata.
+
+datasources:
+  - name: Wazuh Indexer
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: https://wazuh.indexer:9200
+    basicAuth: true
+    basicAuthUser: admin
+    secureJsonData:
+      basicAuthPassword: ${WAZUH_INDEXER_PASSWORD:-SecretPassword}
+    jsonData:
+      database: "wazuh-alerts-*"
+      flavor: opensearch
+      version: "2.11.0"
+      timeField: "@timestamp"
+      tlsSkipVerify: true
+    editable: true
+
+  - name: Shuffle OpenSearch
+    type: grafana-opensearch-datasource
+    access: proxy
+    url: http://shuffle-opensearch:9200
+    jsonData:
+      database: "shuffle*"
+      flavor: opensearch
+      version: "2.11.0"
+      timeField: "@timestamp"
+      tlsSkipVerify: true
+    editable: true
+
+  - name: TheHive Elasticsearch
+    type: elasticsearch
+    access: proxy
+    url: http://elasticsearch:9200
+    jsonData:
+      index: "thehive*"
+      timeField: "@timestamp"
+      esVersion: "7.10.0"
+    editable: true
+
+  - name: Prometheus (placeholder)
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    editable: true
+    isDefault: false

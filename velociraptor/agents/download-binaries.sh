@@ -25,28 +25,35 @@ BASE_URL="https://github.com/Velocidex/velociraptor/releases/download/${VELOCI_V
 echo "[*] Downloading Velociraptor ${VELOCI_PATCH} binaries..."
 echo ""
 
-# Windows
-echo "[1/4] Downloading Windows binary (66 MB)..."
+# Windows (amd64)
+echo "[1/5] Downloading Windows binary (66 MB)..."
 curl -L -o velociraptor-windows.exe "${BASE_URL}/velociraptor-${VELOCI_PATCH}-windows-amd64.exe" \
     || { echo "Failed to download Windows binary"; exit 1; }
 echo "      ✓ velociraptor-windows.exe downloaded"
 
-# Linux
-echo "[2/4] Downloading Linux binary (70 MB)..."
+# Linux amd64 (default filename kept for portal backwards-compat)
+echo "[2/5] Downloading Linux amd64 binary (70 MB)..."
 curl -L -o velociraptor-linux "${BASE_URL}/velociraptor-${VELOCI_PATCH}-linux-amd64" \
-    || { echo "Failed to download Linux binary"; exit 1; }
+    || { echo "Failed to download Linux amd64 binary"; exit 1; }
 chmod +x velociraptor-linux
 echo "      ✓ velociraptor-linux downloaded"
 
+# Linux arm64 (for Apple Silicon Docker hosts, Raspberry Pi, Graviton, etc.)
+echo "[3/5] Downloading Linux arm64 binary (~65 MB)..."
+curl -L -o velociraptor-linux-arm64 "${BASE_URL}/velociraptor-${VELOCI_PATCH}-linux-arm64" \
+    || { echo "[WARN] Failed to download Linux arm64 binary - continuing (arm64 endpoints will not be deployable)"; }
+[ -s velociraptor-linux-arm64 ] && chmod +x velociraptor-linux-arm64
+echo "      ✓ velociraptor-linux-arm64 downloaded"
+
 # macOS Intel
-echo "[3/4] Downloading macOS Intel binary (66 MB)..."
+echo "[4/5] Downloading macOS Intel binary (66 MB)..."
 curl -L -o velociraptor-macos-intel "${BASE_URL}/velociraptor-${VELOCI_PATCH}-darwin-amd64" \
     || { echo "Failed to download macOS Intel binary"; exit 1; }
 chmod +x velociraptor-macos-intel
 echo "      ✓ velociraptor-macos-intel downloaded"
 
 # macOS ARM (Apple Silicon)
-echo "[4/4] Downloading macOS ARM binary (63 MB)..."
+echo "[5/5] Downloading macOS ARM binary (63 MB)..."
 curl -L -o velociraptor-macos-arm "${BASE_URL}/velociraptor-${VELOCI_PATCH}-darwin-arm64" \
     || { echo "Failed to download macOS ARM binary"; exit 1; }
 chmod +x velociraptor-macos-arm

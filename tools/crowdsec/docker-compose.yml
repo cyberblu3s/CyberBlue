@@ -1,0 +1,27 @@
+services:
+  crowdsec:
+    image: crowdsecurity/crowdsec:latest
+    container_name: crowdsec
+    profiles: [standard]
+    restart: unless-stopped
+    environment:
+      COLLECTIONS: "crowdsecurity/sshd crowdsecurity/linux crowdsecurity/iptables crowdsecurity/http-cve crowdsecurity/nginx crowdsecurity/wordpress"
+      GID: "1000"
+    volumes:
+      - ./config:/etc/crowdsec
+      - ./data:/var/lib/crowdsec/data
+      # Read host system logs (read-only)
+      - /var/log:/var/log/host:ro
+      # Read existing CyberBlueSOC tool logs (read-only)
+      - ../zeek/logs:/var/log/zeek:ro
+      - ../honeypots/cowrie/var:/var/log/cowrie:ro
+    ports:
+      - "8090:8080"   # CrowdSec LAPI (8080 in container, mapped to 8090 to avoid clash)
+      - "6060:6060"   # Prometheus metrics
+    networks:
+      - cyber-blue
+    healthcheck:
+      test: ["CMD-SHELL", "cscli lapi status >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5

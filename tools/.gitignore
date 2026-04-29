@@ -1,0 +1,6 @@
+**/logs/
+**/data/
+**/var/
+*.log
+*.pcap
+*.pcapng

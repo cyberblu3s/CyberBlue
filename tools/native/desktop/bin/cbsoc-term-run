@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+#
+# cbsoc-term-run <binary> [args...]
+#
+# Opens the user's preferred terminal, prints a branded banner, runs
+# `<binary> --help`, and drops into an interactive shell where $PWD is the
+# user's home and the requested binary is already on PATH. Used by:
+#
+#   1. the XFCE menu (CLI tool entries pipe through this helper)
+#   2. the welcome dashboard chip handler (cbsoc-cli:// URI scheme)
+#
+# If no terminal emulator is installed we fall back to $SHELL so the .desktop
+# entry doesn't silently fail.
+
+set -u
+
+BIN="${1:-}"
+shift || true
+[[ -z "$BIN" ]] && { echo "usage: cbsoc-term-run <binary> [args...]"; exit 2; }
+
+# Compose the bash fragment that will run inside the new terminal. We write
+# it to a temp file so we can source it from any terminal emulator without
+# having to worry about shell-quoting nested commands.
+SCRIPT="$(mktemp)"
+trap 'rm -f "$SCRIPT"' EXIT
+
+cat > "$SCRIPT" <<EOF
+#!/usr/bin/env bash
+clear
+cat <<'BANNER'
+┌─────────────────────────────────────────────────────────────┐
+│  CyberBlueSOC · Native Toolkit                              │
+│  Tool : ${BIN}
+│  Tip  : type 'exit' to close, or 'cyberblue help' for more  │
+└─────────────────────────────────────────────────────────────┘
+BANNER
+echo
+if command -v "${BIN}" >/dev/null 2>&1; then
+  echo "\$ ${BIN} --help"
+  "${BIN}" --help 2>&1 | head -n 60 || true
+  echo
+  echo "----------------------------------------------------------"
+  echo "Shell ready. '${BIN}' is on your PATH."
+  echo "----------------------------------------------------------"
+else
+  echo "!! '${BIN}' is not on this host's PATH."
+  echo "   Run: sudo bash /home/ubuntu/CyberBlue/tools/native/install.sh"
+fi
+cd "\${HOME}"
+exec "\${SHELL:-/bin/bash}"
+EOF
+chmod +x "$SCRIPT"
+
+# Pick a terminal. In order of preference on an Ubuntu + XFCE box.
+for term in xfce4-terminal gnome-terminal konsole tilix xterm; do
+  if command -v "$term" >/dev/null 2>&1; then
+    case "$term" in
+      xfce4-terminal)
+        exec "$term" --title "CyberBlueSOC · $BIN" --command "bash $SCRIPT"
+        ;;
+      gnome-terminal)
+        exec "$term" --title="CyberBlueSOC · $BIN" -- bash "$SCRIPT"
+        ;;
+      konsole)
+        exec "$term" --title "CyberBlueSOC · $BIN" -e bash "$SCRIPT"
+        ;;
+      tilix)
+        exec "$term" --title="CyberBlueSOC · $BIN" -e bash "$SCRIPT"
+        ;;
+      xterm)
+        exec "$term" -T "CyberBlueSOC · $BIN" -e bash "$SCRIPT"
+        ;;
+    esac
+  fi
+done
+
+# No terminal found — run inline (useful when invoked from an ssh session).
+exec bash "$SCRIPT"

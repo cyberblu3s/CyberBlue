@@ -52,32 +52,33 @@ services:
       context: ./attack-navigator
       dockerfile: Dockerfile
     container_name: mitre-navigator
+    # The runtime stage (nginx:alpine) serves the compiled Angular bundle on
+    # port 80 — NOT 4200. Port 4200 is the Angular dev server port, which is
+    # only used during `npm run serve` and is never started in the prod
+    # image. Historically this mapping was "7013:4200" which resulted in
+    # connection-refused on localhost:7013 because nothing was listening on
+    # 4200 inside the container. See attack-navigator/Dockerfile EXPOSE 80.
     ports:
-      - "7013:4200"
+      - "7013:80"
     restart: unless-stopped
     networks:
       - cyber-blue
 
-  wireshark:
-    image: lscr.io/linuxserver/wireshark:latest
-    container_name: wireshark
-    cap_add:
-      - NET_ADMIN
-    network_mode: host
-    environment:
-      - CUSTOM_USER=admin
-      - PASSWORD=cyberblue
-      - CUSTOM_PORT=7098 # Change HTTP port
-      - CUSTOM_HTTPS_PORT=7099 # Optional: HTTPS port if needed
-    volumes:
-      - ./wireshark/config:/config
-    ports:
-      - "7099:3001" # HTTPS 
-    restart: unless-stopped
-    privileged: true
+  # Wireshark is now installed NATIVELY (see tools/native/install.sh).
+  # A GUI packet analyzer does not belong in a privileged host-mode container:
+  # users expect `wireshark foo.pcap` from the file manager, and tshark/editcap/
+  # mergecap come along for free. See ENHANCEMENTS.md for the migration notes.
 
   suricata:
-    image: stamus/suricata:latest
+    # NOTE: switched from stamus/suricata:latest to jasonish/suricata:latest
+    # because stamus publishes an amd64-only manifest on Docker Hub. On arm64
+    # hosts, `docker compose up` pulls the amd64 image anyway (no manifest
+    # mismatch check by default) and the container crashes at startup with
+    # `exec /usr/bin/suricata: exec format error`. jasonish/suricata is the
+    # de-facto community multi-arch image (linux/amd64 + linux/arm64, same
+    # maintainer as evebox below) and uses the same CLI + config layout, so
+    # the mount points and `command:` line remain unchanged.
+    image: jasonish/suricata:latest
     container_name: suricata
     network_mode: "host" # Use only if you want to sniff actual host traffic
     volumes:
@@ -98,10 +99,17 @@ services:
   evebox:
     image: jasonish/evebox
     container_name: evebox
+    # --no-tls mirrors --no-auth: this is a lab convenience platform and
+    # every other core service is served HTTP on its 70xx port. Without
+    # --no-tls EveBox self-signs a cert on first boot and serves HTTPS on
+    # 5636, which breaks plain http://host:7015 links from the portal and
+    # README and forces users past a browser cert warning for a throwaway
+    # cert. Keep this consistent with --no-auth.
     command:
       - evebox
       - server
       - --no-auth
+      - --no-tls
       - --datastore
       - sqlite
       - --input
@@ -470,9 +478,15 @@ services:
     networks:
       - cyber-blue
 
+  # --- FleetDM stack (amd64-only) ---
+  # FleetDM does NOT publish an arm64 image or linux/arm64 binary as of 2026-04.
+  # All three fleet-* services are therefore gated behind the `amd64` compose
+  # profile: they only start when $COMPOSE_PROFILES contains `amd64` (set by
+  # cyberblue_install.sh after detecting `dpkg --print-architecture = amd64`).
   fleet-redis:
     image: redis:6.2
     container_name: fleet-redis
+    profiles: ["amd64"]
     restart: always
     ports:
       - "6390:6379"
@@ -482,6 +496,7 @@ services:
   fleet-mysql:
     image: mysql:8.0
     container_name: fleet-mysql
+    profiles: ["amd64"]
     restart: always
     command: --innodb-buffer-pool-size=1024M --innodb-flush-log-at-trx-commit=2 --skip-log-bin --innodb-log-file-size=256M --innodb-log-buffer-size=64M
     environment:
@@ -502,6 +517,7 @@ services:
   fleet-server:
     image: fleetdm/fleet:latest
     container_name: fleet-server
+    profiles: ["amd64"]
     depends_on:
       fleet-mysql:
         condition: service_healthy
@@ -622,6 +638,20 @@ services:
       - ./wazuh/config/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
     depends_on:
       - generator
+    # All other core services in this file declare networks: [cyber-blue]
+    # explicitly. Historically the wazuh block (imported from upstream
+    # wazuh-docker) did NOT, which meant the three wazuh containers fell
+    # back to the project's "default" network — whose name flips between
+    # "cyberblue_default" (main compose only) and "cyber-blue" (when
+    # docker-compose.extras.yml is also loaded, because extras overrides
+    # the default network name). That split caused wazuh-dashboard to
+    # end up on a different network from wazuh-indexer, breaking DNS
+    # resolution of "wazuh.indexer" and producing the "Wazuh dashboard
+    # server is not ready yet" UI error. Pinning all three to
+    # cyber-blue explicitly makes the network selection deterministic
+    # regardless of which compose invocation last touched them.
+    networks:
+      - cyber-blue
 
   wazuh.indexer:
     image: wazuh/wazuh-indexer:4.12.0
@@ -650,6 +680,8 @@ services:
       - ./wazuh/config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/opensearch-security/internal_users.yml
     depends_on:
       - generator
+    networks:
+      - cyber-blue
 
   wazuh.dashboard:
     image: wazuh/wazuh-dashboard:4.12.0
@@ -680,6 +712,8 @@ services:
     links:
       - wazuh.indexer:wazuh.indexer
       - wazuh.manager:wazuh.manager
+    networks:
+      - cyber-blue
 
   opensearch-init:
     image: alpine
@@ -688,6 +722,8 @@ services:
       - ./shuffle/shuffle-database:/usr/share/opensearch/data
     command: chown -R 1000:1000 /usr/share/opensearch/data
     restart: "no"
+    networks:
+      - cyber-blue
 
   shuffle-frontend:
     image: ghcr.io/shuffle/shuffle-frontend:latest
@@ -788,7 +824,13 @@ services:
     ports:
       - "7009:8888"
     volumes:
-      - ./caldera/conf/local.yml:/usr/src/app/conf/local.yml:ro
+      # NOTE: must be writable, NOT :ro. Modern caldera (>= 5.x) calls
+      # BaseWorld.apply_config(apply_hash=True) which rewrites conf/local.yml
+      # on startup (adds a config hash used for integrity checks). With :ro
+      # the container crashes with `OSError: Read-only file system:
+      # 'conf/local.yml'` on every boot. This bug is arch-agnostic - seen on
+      # both amd64 and arm64 - but surfaced during the arm64 smoke test.
+      - ./caldera/conf/local.yml:/usr/src/app/conf/local.yml
       - ./caldera/data:/usr/src/app/data
       - ./caldera/logs:/usr/src/app/logs
     networks:

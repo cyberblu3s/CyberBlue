@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <!-- CyberBlueSOC mark: an inverted shield-triangle over a circuit grid -->
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"  stop-color="#63b3ed"/>
+      <stop offset="55%" stop-color="#3182ce"/>
+      <stop offset="100%" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="b"/>
+      <feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- faint circuit traces -->
+  <g stroke="#63b3ed" stroke-opacity="0.22" fill="none" stroke-width="1.2">
+    <path d="M20 50 H70 V90"/>
+    <path d="M180 60 H130 V100"/>
+    <path d="M20 150 H60 V120"/>
+    <path d="M180 140 H140 V110"/>
+    <circle cx="70" cy="90"  r="2.5" fill="#63b3ed" fill-opacity="0.5"/>
+    <circle cx="130" cy="100" r="2.5" fill="#63b3ed" fill-opacity="0.5"/>
+    <circle cx="60" cy="120" r="2.5" fill="#63b3ed" fill-opacity="0.5"/>
+    <circle cx="140" cy="110" r="2.5" fill="#63b3ed" fill-opacity="0.5"/>
+  </g>
+
+  <!-- inverted shield/triangle -->
+  <g filter="url(#glow)">
+    <path d="M100 175 L30 55 L170 55 Z"
+          fill="url(#g)" stroke="#bfe3ff" stroke-width="2" stroke-linejoin="round"/>
+    <!-- inner highlight -->
+    <path d="M100 160 L48 65 L152 65 Z"
+          fill="none" stroke="#ffffff" stroke-opacity="0.18" stroke-width="1.5"/>
+    <!-- 'C' cut-through (Cyber) -->
+    <path d="M115 100 a18 18 0 1 0 0 22"
+          fill="none" stroke="#ffffff" stroke-width="6" stroke-linecap="round"/>
+  </g>
+</svg>

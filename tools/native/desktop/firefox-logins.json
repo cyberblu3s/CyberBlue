@@ -1,0 +1,46 @@
+[
+  { "name": "Wazuh",
+    "origin":   "https://__IP__:7001",
+    "username": "admin",
+    "password": "SecretPassword" },
+
+  { "name": "Velociraptor",
+    "origin":   "https://__IP__:7000",
+    "username": "admin",
+    "password": "cyberblue" },
+
+  { "name": "MISP",
+    "origin":   "https://__IP__:7003",
+    "username": "admin@admin.test",
+    "password": "admin" },
+
+  { "name": "TheHive",
+    "origin":   "http://__IP__:7005",
+    "username": "admin@thehive.local",
+    "password": "secret" },
+
+  { "name": "Cortex",
+    "origin":   "http://__IP__:7006",
+    "username": "admin",
+    "password": "admin" },
+
+  { "name": "Arkime",
+    "origin":   "http://__IP__:7008",
+    "username": "admin",
+    "password": "admin" },
+
+  { "name": "Caldera",
+    "origin":   "http://__IP__:7009",
+    "username": "admin",
+    "password": "admin" },
+
+  { "name": "FleetDM",
+    "origin":   "http://__IP__:7007",
+    "username": "admin",
+    "password": "admin123" },
+
+  { "name": "Grafana",
+    "origin":   "http://__IP__:3000",
+    "username": "admin",
+    "password": "cyberblue" }
+]
